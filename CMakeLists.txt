@@ -30,7 +30,13 @@ endif()
 
 find_package(Vulkan REQUIRED)
 find_package(Freetype REQUIRED)
+find_package(Boost REQUIRED COMPONENTS json)
+find_package(ZLIB REQUIRED)
+find_package(PNG REQUIRED)
+find_package(JPEG REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(WEBP REQUIRED libwebp libwebpdemux)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
   pkg_check_modules(glfw3 QUIET glfw3)
@@ -73,9 +79,17 @@ add_compile_definitions(
 # Main executable
 add_executable(skia_vulkan_test
   skia_vulkan_test.cpp
+  src/SkiaRenderer.cpp
+  src/Swapchain.cpp
+  src/SwapchainImage.cpp
+  src/Movie.cpp
 )
 
-target_include_directories(skia_vulkan_test PRIVATE ${SKIA_INCLUDES} ${glfw3_INCLUDE_DIRS})
+target_include_directories(skia_vulkan_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${SKIA_INCLUDES}
+  ${glfw3_INCLUDE_DIRS}
+)
 set(SKIA_LIB_NAMES "libskia.a" "libskia.so" "skia.lib")
 set(SKIA_LIB_PATH "")
 foreach(LIB_NAME ${SKIA_LIB_NAMES})
@@ -91,9 +105,25 @@ target_link_libraries(skia_vulkan_test PRIVATE
   Vulkan::Vulkan
   Freetype::Freetype
   GPUOpen::VulkanMemoryAllocator
+  Boost::json
+  ZLIB::ZLIB
+  PNG::PNG
+  JPEG::JPEG
+  ${WEBP_LIBRARIES}
   ${glfw3_LIBRARIES}
   pthread dl
 )
+
+# Symlink assets and movies.json from source into build dir for run-from-build convenience
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/assets")
+  file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/assets" "${CMAKE_CURRENT_BINARY_DIR}/assets" SYMBOLIC)
+  message(STATUS "Created symlink: build/assets -> source/assets")
+endif()
+if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/movies.json")
+  file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/movies.json" "${CMAKE_CURRENT_BINARY_DIR}/movies.json" SYMBOLIC)
+  message(STATUS "Created symlink: build/movies.json -> source/movies.json")
+endif()
 
 message(STATUS "Skia root: ${SKIA_ROOT}")
 message(STATUS "Skia build: ${SKIA_BUILD_DIR}")
