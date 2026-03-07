@@ -25,7 +25,7 @@ if(DEFINED SKIA_BUILD_DIR)
 elseif(DEFINED ENV{SKIA_BUILD_DIR})
   set(SKIA_BUILD_DIR "$ENV{SKIA_BUILD_DIR}")
 else()
-  set(SKIA_BUILD_DIR "${SKIA_ROOT}/out/Vulkan")
+  set(SKIA_BUILD_DIR "${SKIA_ROOT}/out/Release")
 endif()
 
 find_package(Vulkan REQUIRED)
@@ -92,12 +92,8 @@ target_link_libraries(skia_vulkan_test PRIVATE
   Freetype::Freetype
   GPUOpen::VulkanMemoryAllocator
   ${glfw3_LIBRARIES}
+  pthread dl
 )
-
-# On Linux we may need pthread and dl for Skia
-if(UNIX AND NOT APPLE)
-  target_link_libraries(skia_vulkan_test PRIVATE pthread dl)
-endif()
 
 message(STATUS "Skia root: ${SKIA_ROOT}")
 message(STATUS "Skia build: ${SKIA_BUILD_DIR}")
