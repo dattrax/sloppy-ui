@@ -30,7 +30,6 @@ bool SwapchainImage::create(const CreateInfo& info) {
     err = vkCreateFence(fDevice, &fenceInfo, nullptr, &fFrameFence);
     if (err != VK_SUCCESS) {
         fprintf(stderr, "vkCreateFence failed: %d\n", err);
-        destroy();
         return false;
     }
 
@@ -50,7 +49,6 @@ bool SwapchainImage::create(const CreateInfo& info) {
         SkColorSpace::MakeSRGB(), &props);
     if (!fSurface) {
         fprintf(stderr, "WrapBackendRenderTarget failed\n");
-        destroy();
         return false;
     }
     return true;
