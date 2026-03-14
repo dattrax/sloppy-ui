@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <cstdint>
+#include <GLFW/glfw3.h>
 
 bool SkiaRenderer::create(const CreateInfo& info) {
     info.backendContext->fMemoryAllocator =
@@ -136,7 +138,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
 
             canvas->restore();
 
-            if (idx == 0) {
+            if (idx == fSelectedRow * kGridCols + fSelectedCol) {
                 SkRect selRect = dstRect.makeOutset(selectionOffset, selectionOffset);
                 SkRRect selRRect = SkRRect::MakeRectXY(selRect, cornerRadius + selectionOffset,
                                                       cornerRadius + selectionOffset);
@@ -156,4 +158,23 @@ bool SkiaRenderer::flushAndSubmit(SkSurface* surface, VkSemaphore signalSemaphor
     fContext->flush(surface, flushInfo, &presentState);
     fContext->submit();
     return true;
+}
+
+void SkiaRenderer::handleKey(int key, bool pressed) {
+    if (!pressed) return;
+
+    switch (key) {
+        case GLFW_KEY_UP:
+            if (fSelectedRow > 0) fSelectedRow--;
+            break;
+        case GLFW_KEY_DOWN:
+            if (fSelectedRow < kGridRows - 1) fSelectedRow++;
+            break;
+        case GLFW_KEY_LEFT:
+            if (fSelectedCol > 0) fSelectedCol--;
+            break;
+        case GLFW_KEY_RIGHT:
+            if (fSelectedCol < kGridCols - 1) fSelectedCol++;
+            break;
+    }
 }

@@ -45,6 +45,7 @@ struct AppState {
 static bool setup(AppState& state);
 static int runRenderLoop(AppState& state);
 static void shutdown(AppState& state);
+static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
 // --- implementation ---
 
@@ -77,12 +78,13 @@ static bool setup(AppState& state) {
         return false;
     }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    state.window = glfwCreateWindow(kWindowWidth, kWindowHeight, "Skia Vulkan", nullptr, nullptr);
+  state.window = glfwCreateWindow(kWindowWidth, kWindowHeight, "Skia Vulkan", nullptr, nullptr);
     if (!state.window) {
         fprintf(stderr, "Failed to create GLFW window.\n");
         glfwTerminate();
         return false;
     }
+    glfwSetWindowUserPointer(state.window, &state);
 
     uint32_t glfwExtCount = 0;
     const char** glfwExts = glfwGetRequiredInstanceExtensions(&glfwExtCount);
@@ -281,7 +283,18 @@ static bool setup(AppState& state) {
     state.width = state.swapchain.width();
     state.height = state.swapchain.height();
 
+    glfwSetKeyCallback(state.window, keyCallback);
+
     return true;
+}
+
+static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    (void)scancode;
+    (void)mods;
+    AppState* state = static_cast<AppState*>(glfwGetWindowUserPointer(window));
+    if (action == GLFW_PRESS) {
+        state->skiaRenderer.handleKey(key, true);
+    }
 }
 
 static int runRenderLoop(AppState& state) {

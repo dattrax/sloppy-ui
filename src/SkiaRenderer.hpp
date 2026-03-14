@@ -47,6 +47,11 @@ public:
 
     const MovieDatabase& movies() const { return fMovies; }
 
+    void handleKey(int key, bool pressed);
+
+    int selectedRow() const { return fSelectedRow; }
+    int selectedCol() const { return fSelectedCol; }
+
 private:
     sk_sp<GrDirectContext> fContext;
     SkPaint fRedPaint;
@@ -56,4 +61,6 @@ private:
 
     static constexpr int kGridCols = 4;
     static constexpr int kGridRows = 3;
+    int fSelectedRow = 0;
+    int fSelectedCol = 0;
 };
