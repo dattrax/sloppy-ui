@@ -18,6 +18,7 @@
 #include "src/gpu/vk/vulkanmemoryallocator/VulkanMemoryAllocatorPriv.h"
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 #include <string>
 #include <cstdint>
 #include <GLFW/glfw3.h>
@@ -48,25 +49,20 @@ bool SkiaRenderer::create(const CreateInfo& info) {
     if (!fMovies.loadFromFile("movies.json")) {
         fprintf(stderr, "Warning: could not load movies.json (run from build dir or set cwd)\n");
     } else {
-        const int maxPosters = kGridCols * kGridRows;
-        fPosterImages.reserve(maxPosters);
-        for (size_t i = 0; i < fMovies.size() && fPosterImages.size() < static_cast<size_t>(maxPosters); ++i) {
+        fPosterImages.reserve(fMovies.size());
+        for (size_t i = 0; i < fMovies.size(); ++i) {
             std::string path = "assets/" + fMovies[i].filename;
             sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str());
-            if (data) {
-                std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(data);
-                if (codec) {
-                    SkBitmap bitmap;
-                    if (bitmap.tryAllocPixels(codec->getInfo()) &&
-                        codec->getPixels(bitmap.info(), bitmap.getPixels(), bitmap.rowBytes()) == SkCodec::kSuccess) {
-                        bitmap.setImmutable();
-                        sk_sp<SkImage> img = SkImages::RasterFromBitmap(bitmap);
-                        if (img) {
-                            fPosterImages.push_back(std::move(img));
-                        }
-                    }
-                }
-            }
+            if (!data) continue;
+            std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(data);
+            if (!codec) continue;
+            SkBitmap bitmap;
+            if (!bitmap.tryAllocPixels(codec->getInfo())) continue;
+            if (codec->getPixels(bitmap.info(), bitmap.getPixels(), bitmap.rowBytes()) != SkCodec::kSuccess) continue;
+            bitmap.setImmutable();
+            sk_sp<SkImage> img = SkImages::RasterFromBitmap(bitmap);
+            if (!img) continue;
+            fPosterImages.push_back(std::move(img));
         }
     }
 
@@ -78,8 +74,37 @@ void SkiaRenderer::destroy() {
     fContext.reset();
 }
 
-void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
+ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     (void)time;
+    (void)width;
+    (void)height;
+
+    if (fIsScrolling) {
+        float scrollTime = time - fScrollStartTime;
+        if (scrollTime >= kScrollDuration) {
+            fScrollProgress = 1.0f;
+            fScrollOffset = fTargetOffset;
+            fIsScrolling = false;
+            // Clamp selection to visible range after scroll completes
+            int visibleRows = kGridRows;
+            int totalRows = static_cast<int>(fPosterImages.size() / kGridCols + (fPosterImages.size() % kGridCols != 0));
+            int maxOffset = totalRows - visibleRows;
+            if (fSelectedRow < fScrollOffset) {
+                fSelectedRow = fScrollOffset;
+            } else if (fSelectedRow >= fScrollOffset + visibleRows) {
+                fSelectedRow = fScrollOffset + visibleRows - 1;
+            }
+        } else {
+            fScrollProgress = scrollTime / kScrollDuration;
+        }
+    }
+
+    float scrollY = 0.0f;
+    if (fIsScrolling) {
+        float t = easeInOut(fScrollProgress);
+        scrollY = t * (height / kGridRows) * (fScrollingDown ? 1.0f : -1.0f);
+    }
+
     canvas->clear(SK_ColorGRAY);
 
     const float padding = 8.f;
@@ -99,15 +124,15 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
 
     for (int row = 0; row < kGridRows; ++row) {
         for (int col = 0; col < kGridCols; ++col) {
-            int idx = row * kGridCols + col;
+            int idx = (fScrollOffset + row) * kGridCols + col;
             if (idx >= static_cast<int>(fPosterImages.size())) {
-                break;
+                continue;
             }
             const sk_sp<SkImage>& img = fPosterImages[idx];
             if (!img) continue;
 
             float cellX = padding + col * (cellW + padding);
-            float cellY = padding + row * (cellH + padding);
+            float cellY = padding + row * (cellH + padding) - scrollY;
 
             float imgW = static_cast<float>(img->width());
             float imgH = static_cast<float>(img->height());
@@ -160,15 +185,41 @@ bool SkiaRenderer::flushAndSubmit(SkSurface* surface, VkSemaphore signalSemaphor
     return true;
 }
 
+float SkiaRenderer::easeInOut(float t) const {
+    return t < 0.5f ? 2.0f * t * t : 1.0f - powf(2.0f * (1.0f - t), 3.0f) / 2.0f;
+}
+
 void SkiaRenderer::handleKey(int key, bool pressed) {
     if (!pressed) return;
 
-    switch (key) {
-        case GLFW_KEY_UP:
-            if (fSelectedRow > 0) fSelectedRow--;
+    int visibleRows = kGridRows;
+    int totalRows = static_cast<int>(fPosterImages.size() / kGridCols + (fPosterImages.size() % kGridCols != 0));
+    int maxOffset = totalRows - visibleRows;
+
+   switch (key) {
+   case GLFW_KEY_UP:
+            if (fSelectedRow > 0) {
+                fSelectedRow--;
+                if (fSelectedRow < fScrollOffset && fScrollOffset > 0) {
+                    fTargetOffset = fScrollOffset - 1;
+                    fIsScrolling = true;
+                    fScrollProgress = 0.0f;
+                    fScrollStartTime = glfwGetTime();
+                    fScrollingDown = false;
+                }
+            }
             break;
-        case GLFW_KEY_DOWN:
-            if (fSelectedRow < kGridRows - 1) fSelectedRow++;
+    case GLFW_KEY_DOWN:
+            if (fSelectedRow < totalRows - 1) {
+                fSelectedRow++;
+                if (fSelectedRow >= fScrollOffset + visibleRows && fScrollOffset < maxOffset) {
+                    fTargetOffset = fScrollOffset + 1;
+                    fIsScrolling = true;
+                    fScrollProgress = 0.0f;
+                    fScrollStartTime = glfwGetTime();
+                    fScrollingDown = true;
+                }
+            }
             break;
         case GLFW_KEY_LEFT:
             if (fSelectedCol > 0) fSelectedCol--;

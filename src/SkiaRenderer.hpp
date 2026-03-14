@@ -61,6 +61,16 @@ private:
 
     static constexpr int kGridCols = 4;
     static constexpr int kGridRows = 3;
-    int fSelectedRow = 0;
+    static constexpr float kScrollDuration = 0.25f;
+
+  int fSelectedRow = 0;
     int fSelectedCol = 0;
+    int fScrollOffset = 0;
+    int fTargetOffset = 0;
+    float fScrollProgress = 0.0f;
+    bool fIsScrolling = false;
+    float fScrollStartTime = 0.0f;
+    bool fScrollingDown = true;
+
+    float easeInOut(float t) const;
 };
