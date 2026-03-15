@@ -3,15 +3,23 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkData.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontMgr.h"
+#include "include/ports/SkFontMgr_empty.h"
 #include "include/core/SkImage.h"
+#include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPoint3.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTextBlob.h"
+#include "include/core/SkTypeface.h"
 #include "include/utils/SkShadowUtils.h"
 #include "include/gpu/ganesh/vk/GrVkDirectContext.h"
 #include "include/gpu/ganesh/GrBackendSemaphore.h"
 #include "include/gpu/ganesh/vk/GrVkBackendSemaphore.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
 #include "include/gpu/vk/VulkanMutableTextureState.h"
 #include "include/gpu/ganesh/GrTypes.h"
 #include "src/gpu/GpuTypesPriv.h"
@@ -21,6 +29,8 @@
 #include <cmath>
 #include <string>
 #include <cstdint>
+#include <vector>
+#include <memory>
 #include <GLFW/glfw3.h>
 
 bool SkiaRenderer::create(const CreateInfo& info) {
@@ -43,9 +53,6 @@ bool SkiaRenderer::create(const CreateInfo& info) {
         info.deviceExtensionCount,
         info.deviceExtensionNames);
 
-    fRedPaint.setAntiAlias(true);
-    fBluePaint.setAntiAlias(true);
-
     if (!fMovies.loadFromFile("movies.json")) {
         fprintf(stderr, "Warning: could not load movies.json (run from build dir or set cwd)\n");
     } else {
@@ -60,35 +67,46 @@ bool SkiaRenderer::create(const CreateInfo& info) {
             if (!bitmap.tryAllocPixels(codec->getInfo())) continue;
             if (codec->getPixels(bitmap.info(), bitmap.getPixels(), bitmap.rowBytes()) != SkCodec::kSuccess) continue;
             bitmap.setImmutable();
-            sk_sp<SkImage> img = SkImages::RasterFromBitmap(bitmap);
-            if (!img) continue;
-            fPosterImages.push_back(std::move(img));
+            sk_sp<SkImage> raster = SkImages::RasterFromBitmap(bitmap);
+            if (!raster) continue;
+            sk_sp<SkImage> gpu = SkImages::TextureFromImage(fContext.get(), raster.get());
+            fPosterImages.push_back(gpu ? std::move(gpu) : std::move(raster));
         }
     }
+
+    sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Empty();
+    fTypeface = mgr->makeFromFile("assets/Roboto-Regular.ttf");
+    if (!fTypeface) {
+        fprintf(stderr, "Warning: could not load any font for text rendering\n");
+    }
+
+    fTitleFont = SkFont(fTypeface, kTitleFontSize);
+
+    fTitlePaint.setAntiAlias(true);
+    fTitlePaint.setColor(SK_ColorWHITE);
+
+    fSelectionPaint.setStyle(SkPaint::kStroke_Style);
+    fSelectionPaint.setColor(SK_ColorWHITE);
+    fSelectionPaint.setStrokeWidth(3.0f);
+    fSelectionPaint.setAntiAlias(true);
 
     return true;
 }
 
 void SkiaRenderer::destroy() {
+    fTitleCache.clear();
     fPosterImages.clear();
     fContext.reset();
 }
 
- void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
-    (void)time;
-    (void)width;
-    (void)height;
-
+void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     if (fIsScrolling) {
         float scrollTime = time - fScrollStartTime;
         if (scrollTime >= kScrollDuration) {
             fScrollProgress = 1.0f;
             fScrollOffset = fTargetOffset;
             fIsScrolling = false;
-            // Clamp selection to visible range after scroll completes
             int visibleRows = kGridRows;
-            int totalRows = static_cast<int>(fPosterImages.size() / kGridCols + (fPosterImages.size() % kGridCols != 0));
-            int maxOffset = totalRows - visibleRows;
             if (fSelectedRow < fScrollOffset) {
                 fSelectedRow = fScrollOffset;
             } else if (fSelectedRow >= fScrollOffset + visibleRows) {
@@ -107,20 +125,19 @@ void SkiaRenderer::destroy() {
 
     canvas->clear(SK_ColorGRAY);
 
-    const float padding = 8.f;
-    const float cornerRadius = 12.f;
-    const float shadowBlur = 8.f;
-    const float selectionOffset = 4.f;
-    const float selectionStrokeWidth = 3.f;
+    const float cellW = (width - kPadding * (kGridCols + 1)) / kGridCols;
+    const float cellH = (height - kPadding * (kGridRows + 1) - kTitleSpace * kGridRows) / kGridRows;
 
-    const float cellW = (width - padding * (kGridCols + 1)) / kGridCols;
-    const float cellH = (height - padding * (kGridRows + 1)) / kGridRows;
+    if (cellW != fCachedCellW) {
+        rebuildTitleCache(cellW);
+    }
 
-    SkPaint selectionPaint;
-    selectionPaint.setStyle(SkPaint::kStroke_Style);
-    selectionPaint.setColor(SK_ColorWHITE);
-    selectionPaint.setStrokeWidth(selectionStrokeWidth);
-    selectionPaint.setAntiAlias(true);
+    const SkPoint3 zPlaneParams = SkPoint3::Make(0, 0, 0);
+    const SkPoint3 lightPos = SkPoint3::Make(width * 0.25f, -height * 0.5f, 400);
+    const SkScalar lightRadius = 32.0f;
+    const SkColor ambientColor = SkColorSetA(SK_ColorBLACK, 0x30);
+    const SkColor spotColor = SkColorSetA(SK_ColorBLACK, 0x60);
+    const int selectedIdx = fSelectedRow * kGridCols + fSelectedCol;
 
     for (int row = 0; row < kGridRows; ++row) {
         for (int col = 0; col < kGridCols; ++col) {
@@ -131,8 +148,8 @@ void SkiaRenderer::destroy() {
             const sk_sp<SkImage>& img = fPosterImages[idx];
             if (!img) continue;
 
-            float cellX = padding + col * (cellW + padding);
-            float cellY = padding + row * (cellH + padding) - scrollY;
+            float cellX = kPadding + col * (cellW + kPadding);
+            float cellY = kPadding + row * (cellH + kPadding + kTitleSpace) - scrollY;
 
             float imgW = static_cast<float>(img->width());
             float imgH = static_cast<float>(img->height());
@@ -143,31 +160,28 @@ void SkiaRenderer::destroy() {
             float dstY = cellY + (cellH - dstH) * 0.5f;
 
             SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
-            SkRRect rrect = SkRRect::MakeRectXY(dstRect, cornerRadius, cornerRadius);
+            SkRRect rrect = SkRRect::MakeRectXY(dstRect, kCornerRadius, kCornerRadius);
 
-            SkPath path = SkPath::RRect(rrect);
-
-            SkPoint3 zPlaneParams = SkPoint3::Make(0, 0, 0);
-            SkPoint3 lightPos = SkPoint3::Make(width * 0.25f, -height * 0.5f, 400);
-            SkScalar lightRadius = shadowBlur * 4;
-            SkColor ambientColor = SkColorSetA(SK_ColorBLACK, 0x30);
-            SkColor spotColor = SkColorSetA(SK_ColorBLACK, 0x60);
-            SkShadowUtils::DrawShadow(canvas, path, zPlaneParams, lightPos, lightRadius,
+            SkShadowUtils::DrawShadow(canvas, SkPath::RRect(rrect),
+                                      zPlaneParams, lightPos, lightRadius,
                                       ambientColor, spotColor);
 
             canvas->save();
             canvas->clipRRect(rrect, true);
-            SkRect src = SkRect::MakeIWH(img->width(), img->height());
-            canvas->drawImageRect(img, src, dstRect, SkSamplingOptions(), nullptr,
-                                 SkCanvas::kFast_SrcRectConstraint);
-
+            canvas->drawImageRect(img, dstRect, SkSamplingOptions(), nullptr);
             canvas->restore();
 
-            if (idx == fSelectedRow * kGridCols + fSelectedCol) {
-                SkRect selRect = dstRect.makeOutset(selectionOffset, selectionOffset);
-                SkRRect selRRect = SkRRect::MakeRectXY(selRect, cornerRadius + selectionOffset,
-                                                      cornerRadius + selectionOffset);
-                canvas->drawRRect(selRRect, selectionPaint);
+            if (idx == selectedIdx) {
+                SkRect selRect = dstRect.makeOutset(kSelectionOffset, kSelectionOffset);
+                SkRRect selRRect = SkRRect::MakeRectXY(selRect,
+                    kCornerRadius + kSelectionOffset, kCornerRadius + kSelectionOffset);
+                canvas->drawRRect(selRRect, fSelectionPaint);
+            }
+
+            if (idx < static_cast<int>(fTitleCache.size()) && fTitleCache[idx].blob) {
+                float titleX = cellX + (cellW - fTitleCache[idx].width) * 0.5f;
+                float titleY = cellY + cellH + kTitleSpace * 0.75f;
+                canvas->drawTextBlob(fTitleCache[idx].blob, titleX, titleY, fTitlePaint);
             }
         }
     }
@@ -187,6 +201,52 @@ bool SkiaRenderer::flushAndSubmit(SkSurface* surface, VkSemaphore signalSemaphor
 
 float SkiaRenderer::easeInOut(float t) const {
     return t < 0.5f ? 2.0f * t * t : 1.0f - powf(2.0f * (1.0f - t), 3.0f) / 2.0f;
+}
+
+void SkiaRenderer::rebuildTitleCache(float cellW) {
+    fCachedCellW = cellW;
+    fTitleCache.resize(fMovies.size());
+    float maxWidth = cellW * 0.9f;
+
+    for (size_t i = 0; i < fMovies.size(); ++i) {
+        std::string display = ellipsizeText(fMovies[i].title, maxWidth, fTitleFont);
+        float w = fTitleFont.measureText(display.c_str(), display.size(), SkTextEncoding::kUTF8);
+        fTitleCache[i].text = std::move(display);
+        fTitleCache[i].width = w;
+        fTitleCache[i].blob = SkTextBlob::MakeFromText(
+            fTitleCache[i].text.c_str(), fTitleCache[i].text.size(),
+            fTitleFont, SkTextEncoding::kUTF8);
+    }
+}
+
+std::string SkiaRenderer::ellipsizeText(const std::string& text, float maxWidth, SkFont& font) {
+    if (text.empty()) return text;
+
+    float textWidth = font.measureText(text.c_str(), text.size(), SkTextEncoding::kUTF8);
+    if (textWidth <= maxWidth) {
+        return text;
+    }
+
+    static const std::string ellipsis = "...";
+    float ellipsisWidth = font.measureText(ellipsis.c_str(), ellipsis.size(), SkTextEncoding::kUTF8);
+    if (ellipsisWidth >= maxWidth) {
+        return "";
+    }
+
+    float availableWidth = maxWidth - ellipsisWidth;
+
+    size_t lo = 0, hi = text.size();
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo + 1) / 2;
+        float w = font.measureText(text.c_str(), mid, SkTextEncoding::kUTF8);
+        if (w <= availableWidth) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    return text.substr(0, lo) + ellipsis;
 }
 
 void SkiaRenderer::handleKey(int key, bool pressed) {

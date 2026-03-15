@@ -7,14 +7,18 @@
 
 #include "Movie.hpp"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkFont.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkSurface.h"
+#include "include/core/SkTextBlob.h"
+#include "include/core/SkTypeface.h"
 #include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/vk/VulkanBackendContext.h"
 #include "include/gpu/vk/VulkanExtensions.h"
 #include <vulkan/vulkan_core.h>
 #include <vector>
+#include <string>
 #include <cstdint>
 
 class SkiaRenderer {
@@ -54,16 +58,31 @@ public:
 
 private:
     sk_sp<GrDirectContext> fContext;
-    SkPaint fRedPaint;
-    SkPaint fBluePaint;
+    SkPaint fTitlePaint;
+    SkPaint fSelectionPaint;
     MovieDatabase fMovies;
     std::vector<sk_sp<SkImage>> fPosterImages;
+    sk_sp<SkTypeface> fTypeface;
+    SkFont fTitleFont;
+
+    struct TitleCache {
+        std::string text;
+        sk_sp<SkTextBlob> blob;
+        float width = 0.0f;
+    };
+    std::vector<TitleCache> fTitleCache;
+    float fCachedCellW = 0.0f;
 
     static constexpr int kGridCols = 4;
     static constexpr int kGridRows = 3;
     static constexpr float kScrollDuration = 0.25f;
+    static constexpr float kTitleFontSize = 28.0f;
+    static constexpr float kTitleSpace = 32.0f;
+    static constexpr float kPadding = 8.0f;
+    static constexpr float kCornerRadius = 12.0f;
+    static constexpr float kSelectionOffset = 4.0f;
 
-  int fSelectedRow = 0;
+    int fSelectedRow = 0;
     int fSelectedCol = 0;
     int fScrollOffset = 0;
     int fTargetOffset = 0;
@@ -72,5 +91,7 @@ private:
     float fScrollStartTime = 0.0f;
     bool fScrollingDown = true;
 
+    void rebuildTitleCache(float cellW);
     float easeInOut(float t) const;
+    static std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
 };
