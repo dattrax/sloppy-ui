@@ -2,6 +2,7 @@
 #include "include/codec/SkCodec.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColor.h"
+#include "include/core/SkColorFilter.h"
 #include "include/core/SkData.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontMgr.h"
@@ -90,6 +91,9 @@ bool SkiaRenderer::create(const CreateInfo& info) {
     fSelectionPaint.setStrokeWidth(3.0f);
     fSelectionPaint.setAntiAlias(true);
 
+    fMatrix.setScale(0.8f, 0.8f, 0.8f, 1.0f);
+    fDimPaint.setColorFilter(SkColorFilters::Matrix(fMatrix));
+
     return true;
 }
 
@@ -138,8 +142,11 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     const SkColor ambientColor = SkColorSetA(SK_ColorBLACK, 0x30);
     const SkColor spotColor = SkColorSetA(SK_ColorBLACK, 0x60);
     const int selectedIdx = fSelectedRow * kGridCols + fSelectedCol;
+    const int selectedRowGlobal = fScrollOffset + fSelectedRow;
 
     for (int row = 0; row < kGridRows; ++row) {
+        bool rowHasHighlight = (fScrollOffset + row) == selectedRowGlobal;
+
         for (int col = 0; col < kGridCols; ++col) {
             int idx = (fScrollOffset + row) * kGridCols + col;
             if (idx >= static_cast<int>(fPosterImages.size())) {
@@ -168,7 +175,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
 
             canvas->save();
             canvas->clipRRect(rrect, true);
-            canvas->drawImageRect(img, dstRect, SkSamplingOptions(), nullptr);
+            canvas->drawImageRect(img, dstRect, SkSamplingOptions(), rowHasHighlight ? nullptr : &fDimPaint);
             canvas->restore();
 
             if (idx == selectedIdx) {

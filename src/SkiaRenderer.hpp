@@ -13,6 +13,7 @@
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
+#include "include/effects/SkColorMatrix.h"
 #include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/vk/VulkanBackendContext.h"
 #include "include/gpu/vk/VulkanExtensions.h"
@@ -60,10 +61,12 @@ private:
     sk_sp<GrDirectContext> fContext;
     SkPaint fTitlePaint;
     SkPaint fSelectionPaint;
+    SkPaint fDimPaint;
     MovieDatabase fMovies;
     std::vector<sk_sp<SkImage>> fPosterImages;
     sk_sp<SkTypeface> fTypeface;
     SkFont fTitleFont;
+    SkColorMatrix fMatrix;
 
     struct TitleCache {
         std::string text;
