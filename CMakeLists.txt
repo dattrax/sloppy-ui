@@ -88,9 +88,13 @@ add_executable(skia_vulkan_test
 
 target_include_directories(skia_vulkan_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_include_directories(skia_vulkan_test SYSTEM PRIVATE
   ${SKIA_INCLUDES}
   ${glfw3_INCLUDE_DIRS}
 )
+
 set(SKIA_LIB_NAMES "libskia.a" "libskia.so" "skia.lib")
 set(SKIA_LIB_PATH "")
 foreach(LIB_NAME ${SKIA_LIB_NAMES})
