@@ -9,14 +9,15 @@
 #include "include/ports/SkFontMgr_empty.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkBlurTypes.h"
+#include "include/core/SkColorFilter.h"
+#include "include/core/SkMaskFilter.h"
 #include "include/core/SkPath.h"
-#include "include/core/SkPoint3.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
-#include "include/utils/SkShadowUtils.h"
 #include "include/gpu/ganesh/vk/GrVkDirectContext.h"
 #include "include/gpu/ganesh/GrBackendSemaphore.h"
 #include "include/gpu/ganesh/vk/GrVkBackendSemaphore.h"
@@ -136,11 +137,6 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         rebuildTitleCache(cellW);
     }
 
-    const SkPoint3 zPlaneParams = SkPoint3::Make(0, 0, 0);
-    const SkPoint3 lightPos = SkPoint3::Make(width * 0.25f, -height * 0.5f, 400);
-    const SkScalar lightRadius = 32.0f;
-    const SkColor ambientColor = SkColorSetA(SK_ColorBLACK, 0x30);
-    const SkColor spotColor = SkColorSetA(SK_ColorBLACK, 0x60);
     const int selectedIdx = fSelectedRow * kGridCols + fSelectedCol;
     const int selectedRowGlobal = fScrollOffset + fSelectedRow;
 
@@ -169,10 +165,16 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
             SkRRect rrect = SkRRect::MakeRectXY(dstRect, kCornerRadius, kCornerRadius);
 
-            SkShadowUtils::DrawShadow(canvas, SkPath::RRect(rrect),
-                                      zPlaneParams, lightPos, lightRadius,
-                                      ambientColor, spotColor);
+            // Draw simple offset shadow (no lighting simulation)
+            SkRect shadowRect = dstRect.makeOffset(8.0f, 8.0f);
+            SkRRect shadowRRect = SkRRect::MakeRectXY(shadowRect, kCornerRadius, kCornerRadius);
+            SkPaint shadowPaint;
+            shadowPaint.setAntiAlias(true);
+            shadowPaint.setColor(SkColorSetA(SK_ColorBLACK, 0x20));
+            shadowPaint.setMaskFilter(SkMaskFilter::MakeBlur(kSolid_SkBlurStyle, 8.0f));
+            canvas->drawRRect(shadowRRect, shadowPaint);
 
+            // Then draw the image on top
             canvas->save();
             canvas->clipRRect(rrect, true);
             canvas->drawImageRect(img, dstRect, SkSamplingOptions(), rowHasHighlight ? nullptr : &fDimPaint);
