@@ -21,6 +21,9 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <queue>
+#include <mutex>
+#include <utility>
 
 class SkiaRenderer {
 public:
@@ -53,6 +56,9 @@ public:
     const MovieDatabase& movies() const { return fMovies; }
 
     void handleKey(int key, bool pressed);
+    void enqueueInputEvent(int key, bool pressed);
+    bool pollInputEvent(std::pair<int, bool>& event);
+    void processInputEvent(int key, bool pressed);
 
     int selectedRow() const { return fSelectedRow; }
     int selectedCol() const { return fSelectedCol; }
@@ -93,6 +99,9 @@ private:
     bool fIsScrolling = false;
     float fScrollStartTime = 0.0f;
     bool fScrollingDown = true;
+
+    std::queue<std::pair<int, bool>> fInputQueue;
+    std::mutex fInputMutex;
 
     void rebuildTitleCache(float cellW);
     float easeInOut(float t) const;

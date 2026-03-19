@@ -9,6 +9,7 @@
 
 #include "src/Swapchain.hpp"
 #include "src/SkiaRenderer.hpp"
+#include "src/InputProcessor.hpp"
 #include "include/gpu/vk/VulkanBackendContext.h"
 #include "include/gpu/vk/VulkanExtensions.h"
 #include "include/gpu/vk/VulkanPreferredFeatures.h"
@@ -34,6 +35,7 @@ struct AppState {
     VkQueue queue = VK_NULL_HANDLE;
     Swapchain swapchain;
     SkiaRenderer skiaRenderer;
+    std::unique_ptr<InputProcessor> inputProcessor;
     uint32_t presentQueueIndex = 0;
     int width = kWindowWidth;
     int height = kWindowHeight;
@@ -50,6 +52,10 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
 // --- implementation ---
 
 static void shutdown(AppState& state) {
+    if (state.inputProcessor) {
+        state.inputProcessor->stop();
+        state.inputProcessor.reset();
+    }
     state.swapchain.destroy();
     state.skiaRenderer.destroy();
     state.backendContext.fMemoryAllocator.reset();
@@ -283,18 +289,12 @@ static bool setup(AppState& state) {
     state.width = state.swapchain.width();
     state.height = state.swapchain.height();
 
-    glfwSetKeyCallback(state.window, keyCallback);
+    state.inputProcessor = std::make_unique<InputProcessor>(&state.skiaRenderer);
+    state.inputProcessor->setWindow(state.window);
+    state.inputProcessor->start();
+    glfwSetKeyCallback(state.window, InputProcessor::keyCallback);
 
     return true;
-}
-
-static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    (void)scancode;
-    (void)mods;
-    AppState* state = static_cast<AppState*>(glfwGetWindowUserPointer(window));
-    if (action == GLFW_PRESS) {
-        state->skiaRenderer.handleKey(key, true);
-    }
 }
 
 static int runRenderLoop(AppState& state) {
@@ -302,7 +302,12 @@ static int runRenderLoop(AppState& state) {
     VkResult acquireResult;
 
     while (!glfwWindowShouldClose(state.window)) {
-        glfwPollEvents();
+        if (state.inputProcessor) {
+            std::pair<int, bool> event;
+            while (state.skiaRenderer.pollInputEvent(event)) {
+                state.skiaRenderer.processInputEvent(event.first, event.second);
+            }
+        }
 
         if (!state.swapchain.acquire(&currentImageIndex, &acquireResult)) {
             if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR) {

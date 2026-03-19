@@ -83,6 +83,7 @@ add_executable(skia_vulkan_test
   src/Swapchain.cpp
   src/SwapchainImage.cpp
   src/Movie.cpp
+  src/InputProcessor.cpp
 )
 
 target_include_directories(skia_vulkan_test PRIVATE

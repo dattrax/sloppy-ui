@@ -296,3 +296,22 @@ void SkiaRenderer::handleKey(int key, bool pressed) {
             break;
     }
 }
+
+void SkiaRenderer::enqueueInputEvent(int key, bool pressed) {
+    std::lock_guard<std::mutex> lock(fInputMutex);
+    fInputQueue.push(std::make_pair(key, pressed));
+}
+
+bool SkiaRenderer::pollInputEvent(std::pair<int, bool>& event) {
+    std::lock_guard<std::mutex> lock(fInputMutex);
+    if (fInputQueue.empty()) {
+        return false;
+    }
+    event = fInputQueue.front();
+    fInputQueue.pop();
+    return true;
+}
+
+void SkiaRenderer::processInputEvent(int key, bool pressed) {
+    handleKey(key, pressed);
+}
