@@ -104,19 +104,23 @@ void SkiaRenderer::destroy() {
     fContext.reset();
 }
 
+void SkiaRenderer::finishScroll() {
+    fScrollProgress = 1.0f;
+    fScrollOffset = fTargetOffset;
+    fIsScrolling = false;
+    int visibleRows = kGridRows;
+    if (fSelectedRow < fScrollOffset) {
+        fSelectedRow = fScrollOffset;
+    } else if (fSelectedRow >= fScrollOffset + visibleRows) {
+        fSelectedRow = fScrollOffset + visibleRows - 1;
+    }
+}
+
 void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     if (fIsScrolling) {
         float scrollTime = time - fScrollStartTime;
         if (scrollTime >= kScrollDuration) {
-            fScrollProgress = 1.0f;
-            fScrollOffset = fTargetOffset;
-            fIsScrolling = false;
-            int visibleRows = kGridRows;
-            if (fSelectedRow < fScrollOffset) {
-                fSelectedRow = fScrollOffset;
-            } else if (fSelectedRow >= fScrollOffset + visibleRows) {
-                fSelectedRow = fScrollOffset + visibleRows - 1;
-            }
+            finishScroll();
         } else {
             fScrollProgress = scrollTime / kScrollDuration;
         }
@@ -258,15 +262,33 @@ std::string SkiaRenderer::ellipsizeText(const std::string& text, float maxWidth,
     return text.substr(0, lo) + ellipsis;
 }
 
-void SkiaRenderer::handleKey(int key, bool pressed) {
+void SkiaRenderer::enqueueInputEvent(int key, bool pressed) {
+    std::lock_guard<std::mutex> lock(fInputMutex);
+    fInputQueue.push(std::make_pair(key, pressed));
+}
+
+bool SkiaRenderer::pollInputEvent(std::pair<int, bool>& event) {
+    std::lock_guard<std::mutex> lock(fInputMutex);
+    if (fInputQueue.empty()) {
+        return false;
+    }
+    event = fInputQueue.front();
+    fInputQueue.pop();
+    return true;
+}
+
+void SkiaRenderer::processInputEvent(int key, bool pressed) {
     if (!pressed) return;
+    if (fIsScrolling) {
+        finishScroll();
+    }
 
     int visibleRows = kGridRows;
     int totalRows = static_cast<int>(fPosterImages.size() / kGridCols + (fPosterImages.size() % kGridCols != 0));
     int maxOffset = totalRows - visibleRows;
 
-   switch (key) {
-   case GLFW_KEY_UP:
+    switch (key) {
+        case GLFW_KEY_UP:
             if (fSelectedRow > 0) {
                 fSelectedRow--;
                 if (fSelectedRow < fScrollOffset && fScrollOffset > 0) {
@@ -278,7 +300,7 @@ void SkiaRenderer::handleKey(int key, bool pressed) {
                 }
             }
             break;
-    case GLFW_KEY_DOWN:
+        case GLFW_KEY_DOWN:
             if (fSelectedRow < totalRows - 1) {
                 fSelectedRow++;
                 if (fSelectedRow >= fScrollOffset + visibleRows && fScrollOffset < maxOffset) {
@@ -297,23 +319,4 @@ void SkiaRenderer::handleKey(int key, bool pressed) {
             if (fSelectedCol < kGridCols - 1) fSelectedCol++;
             break;
     }
-}
-
-void SkiaRenderer::enqueueInputEvent(int key, bool pressed) {
-    std::lock_guard<std::mutex> lock(fInputMutex);
-    fInputQueue.push(std::make_pair(key, pressed));
-}
-
-bool SkiaRenderer::pollInputEvent(std::pair<int, bool>& event) {
-    std::lock_guard<std::mutex> lock(fInputMutex);
-    if (fInputQueue.empty()) {
-        return false;
-    }
-    event = fInputQueue.front();
-    fInputQueue.pop();
-    return true;
-}
-
-void SkiaRenderer::processInputEvent(int key, bool pressed) {
-    handleKey(key, pressed);
 }

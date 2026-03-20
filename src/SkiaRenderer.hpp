@@ -55,7 +55,6 @@ public:
 
     const MovieDatabase& movies() const { return fMovies; }
 
-    void handleKey(int key, bool pressed);
     void enqueueInputEvent(int key, bool pressed);
     bool pollInputEvent(std::pair<int, bool>& event);
     void processInputEvent(int key, bool pressed);
@@ -89,7 +88,7 @@ private:
     static constexpr float kTitleSpace = 32.0f;
     static constexpr float kPadding = 8.0f;
     static constexpr float kCornerRadius = 12.0f;
-    static constexpr float kSelectionOffset = 4.0f;
+    static constexpr float kSelectionOffset = 0.0f;
 
     int fSelectedRow = 0;
     int fSelectedCol = 0;
@@ -104,6 +103,7 @@ private:
     std::mutex fInputMutex;
 
     void rebuildTitleCache(float cellW);
+    void finishScroll();
     float easeInOut(float t) const;
     static std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
 };
