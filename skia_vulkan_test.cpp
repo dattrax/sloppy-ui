@@ -24,6 +24,7 @@
 static constexpr uint32_t kApiVersion = VK_API_VERSION_1_1;
 static constexpr int kWindowWidth = 1280;
 static constexpr int kWindowHeight = 720;
+static constexpr double kIdleFrameWait = 16.0 / 1000.0;
 
 // Vulkan/GLFW state. Skia and swapchain are in separate classes.
 struct AppState {
@@ -47,15 +48,11 @@ struct AppState {
 static bool setup(AppState& state);
 static int runRenderLoop(AppState& state);
 static void shutdown(AppState& state);
-static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
 // --- implementation ---
 
 static void shutdown(AppState& state) {
-    if (state.inputProcessor) {
-        state.inputProcessor->stop();
-        state.inputProcessor.reset();
-    }
+    state.inputProcessor.reset();
     state.swapchain.destroy();
     state.skiaRenderer.destroy();
     state.backendContext.fMemoryAllocator.reset();
@@ -291,7 +288,6 @@ static bool setup(AppState& state) {
 
     state.inputProcessor = std::make_unique<InputProcessor>(&state.skiaRenderer);
     state.inputProcessor->setWindow(state.window);
-    state.inputProcessor->start();
     glfwSetKeyCallback(state.window, InputProcessor::keyCallback);
 
     return true;
@@ -302,6 +298,8 @@ static int runRenderLoop(AppState& state) {
     VkResult acquireResult;
 
     while (!glfwWindowShouldClose(state.window)) {
+        glfwWaitEventsTimeout(kIdleFrameWait);
+
         if (state.inputProcessor) {
             std::pair<int, bool> event;
             while (state.skiaRenderer.pollInputEvent(event)) {
