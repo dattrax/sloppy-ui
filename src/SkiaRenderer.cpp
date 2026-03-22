@@ -169,6 +169,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
             SkRRect rrect = SkRRect::MakeRectXY(dstRect, kCornerRadius, kCornerRadius);
 
+#if 0
             // Draw simple offset shadow (no lighting simulation)
             SkRect shadowRect = dstRect.makeOffset(8.0f, 8.0f);
             SkRRect shadowRRect = SkRRect::MakeRectXY(shadowRect, kCornerRadius, kCornerRadius);
@@ -177,6 +178,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             shadowPaint.setColor(SkColorSetA(SK_ColorBLACK, 0x20));
             shadowPaint.setMaskFilter(SkMaskFilter::MakeBlur(kSolid_SkBlurStyle, 8.0f));
             canvas->drawRRect(shadowRRect, shadowPaint);
+#endif
 
             // Then draw the image on top
             canvas->save();
@@ -194,7 +196,14 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             if (idx < static_cast<int>(fTitleCache.size()) && fTitleCache[idx].blob) {
                 float titleX = cellX + (cellW - fTitleCache[idx].width) * 0.5f;
                 float titleY = cellY + cellH + kTitleSpace * 0.75f;
-                canvas->drawTextBlob(fTitleCache[idx].blob, titleX, titleY, fTitlePaint);
+
+                if (idx == selectedIdx) {
+                    float maxWidth = cellW * 0.9f;
+                    float textY = titleY;
+                    drawScrollingText(canvas, fTitleCache[idx].fullText, titleX, textY, maxWidth, fTitlePaint, time);
+                } else {
+                    canvas->drawTextBlob(fTitleCache[idx].blob, titleX, titleY, fTitlePaint);
+                }
             }
         }
     }
@@ -222,10 +231,13 @@ void SkiaRenderer::rebuildTitleCache(float cellW) {
     float maxWidth = cellW * 0.9f;
 
     for (size_t i = 0; i < fMovies.size(); ++i) {
-        std::string display = ellipsizeText(fMovies[i].title, maxWidth, fTitleFont);
+        const std::string& fullText = fMovies[i].title;
+        std::string display = ellipsizeText(fullText, maxWidth, fTitleFont);
         float w = fTitleFont.measureText(display.c_str(), display.size(), SkTextEncoding::kUTF8);
         fTitleCache[i].text = std::move(display);
+        fTitleCache[i].fullText = fullText;
         fTitleCache[i].width = w;
+        fTitleCache[i].textWidth = fTitleFont.measureText(fullText.c_str(), fullText.size(), SkTextEncoding::kUTF8);
         fTitleCache[i].blob = SkTextBlob::MakeFromText(
             fTitleCache[i].text.c_str(), fTitleCache[i].text.size(),
             fTitleFont, SkTextEncoding::kUTF8);
@@ -319,4 +331,51 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
             if (fSelectedCol < kGridCols - 1) fSelectedCol++;
             break;
     }
+
+    fIsTextScrolling = true;
+    fScrollingTextStartTime = glfwGetTime();
+}
+
+void SkiaRenderer::drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth, SkPaint& paint, float time) {
+    if (text.empty()) return;
+
+    if (fTitleCache.empty()) return;
+
+    size_t idx = fSelectedRow * kGridCols + fSelectedCol;
+    if (idx >= fTitleCache.size()) return;
+
+    float textWidth = fTitleCache[idx].textWidth;
+
+    if (textWidth <= maxWidth) {
+        sk_sp<SkTextBlob> blob = SkTextBlob::MakeFromText(text.c_str(), text.size(), fTitleFont, SkTextEncoding::kUTF8);
+        canvas->drawTextBlob(blob, x, y, paint);
+        return;
+    }
+
+    float scrollDuration = textWidth / kTextScrollSpeed;
+    float pauseTime = scrollDuration + kTextScrollPauseDuration;
+    float scrollTime = time - fScrollingTextStartTime;
+
+    if (scrollTime >= pauseTime) {
+        fScrollingTextStartTime = time;
+        scrollTime = 0.0f;
+    }
+
+    float scrollOffset = 0.0f;
+    if (scrollTime < scrollDuration) {
+        scrollOffset = scrollTime * kTextScrollSpeed;
+    } else if (scrollTime < pauseTime) {
+        scrollOffset = scrollDuration * kTextScrollSpeed;
+    }
+
+    float currentX = (x + maxWidth) - scrollOffset;
+
+    canvas->save();
+    SkRect clipRect = SkRect::MakeXYWH(x, y - 20, maxWidth, 40);
+    canvas->clipRect(clipRect);
+
+    sk_sp<SkTextBlob> blob = SkTextBlob::MakeFromText(text.c_str(), text.size(), fTitleFont, SkTextEncoding::kUTF8);
+    canvas->drawTextBlob(blob, currentX, y, paint);
+
+    canvas->restore();
 }

@@ -48,6 +48,7 @@ This project has no automated test suite. Manual testing via running the applica
 - Maximum line length: ~100 characters
 - Empty lines between logical sections
 - Single blank line before `private:` and `public:` sections
+- do not have lines which just contain space characters or tabs
 
 ### Error Handling
 - Return `bool` for operations that can fail (e.g., `create()`, `loadFromFile()`)

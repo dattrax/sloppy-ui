@@ -75,8 +75,10 @@ private:
 
     struct TitleCache {
         std::string text;
+        std::string fullText;
         sk_sp<SkTextBlob> blob;
         float width = 0.0f;
+        float textWidth = 0.0f;
     };
     std::vector<TitleCache> fTitleCache;
     float fCachedCellW = 0.0f;
@@ -89,6 +91,8 @@ private:
     static constexpr float kPadding = 8.0f;
     static constexpr float kCornerRadius = 12.0f;
     static constexpr float kSelectionOffset = 0.0f;
+    static constexpr float kTextScrollSpeed = 60.0f;
+    static constexpr float kTextScrollPauseDuration = 2.5f;
 
     int fSelectedRow = 0;
     int fSelectedCol = 0;
@@ -99,11 +103,16 @@ private:
     float fScrollStartTime = 0.0f;
     bool fScrollingDown = true;
 
+    float fScrollingTextOffset = 0.0f;
+    float fScrollingTextStartTime = 0.0f;
+    bool fIsTextScrolling = false;
+
     std::queue<std::pair<int, bool>> fInputQueue;
     std::mutex fInputMutex;
 
     void rebuildTitleCache(float cellW);
     void finishScroll();
     float easeInOut(float t) const;
-    static std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
+    std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
+    void drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth, SkPaint& paint, float time);
 };
