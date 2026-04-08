@@ -71,6 +71,10 @@ private:
     std::vector<sk_sp<SkImage>> fPosterImages;
     sk_sp<SkTypeface> fTypeface;
     SkFont fTitleFont;
+    SkFont fDetailTitleFont;
+    SkFont fDetailBodyFont;
+    SkFont fDetailMetaFont;
+    SkPaint fDetailTextPaint;
     SkColorMatrix fMatrix;
 
     struct TitleCache {
@@ -113,6 +117,23 @@ private:
     void rebuildTitleCache(float cellW);
     void finishScroll();
     float easeInOut(float t) const;
-    std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
+    static std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
     void drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth, SkPaint& paint, float time);
+
+    void drawDetailView(SkCanvas* canvas, int width, int height);
+    static std::vector<std::string> wrapTextToLines(const std::string& text, float maxWidth, SkFont& font);
+    static std::string formatDetailPrice(const Movie& movie);
+    static std::string formatDetailMetadata(const Movie& movie);
+
+    static constexpr float kDetailPanelFraction = 0.6f;
+    static constexpr float kDetailFeatherFraction = 0.15f;
+    static constexpr float kDetailTitleFontSize = 48.0f;
+    static constexpr float kDetailBodyFontSize = 28.0f;
+    static constexpr float kDetailMetaFontSize = 28.0f;
+    static constexpr float kDetailPanelPadding = 24.0f;
+    static constexpr float kDetailTitleBodyGap = 20.0f;
+    static constexpr float kDetailBodyMetaGap = 20.0f;
+
+    bool fDetailMode = false;
+    int fDetailIndex = 0;
 };
