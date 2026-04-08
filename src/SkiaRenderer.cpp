@@ -118,11 +118,25 @@ void SkiaRenderer::finishScroll() {
     fScrollProgress = 1.0f;
     fScrollOffset = fTargetOffset;
     fIsScrolling = false;
-    int visibleRows = kGridRows;
-    if (fSelectedRow < fScrollOffset) {
-        fSelectedRow = fScrollOffset;
-    } else if (fSelectedRow >= fScrollOffset + visibleRows) {
-        fSelectedRow = fScrollOffset + visibleRows - 1;
+    const int visibleRows = kGridRows;
+    const size_t itemCount = fPosterImages.size();
+    if (itemCount == 0) {
+        return;
+    }
+    const int totalRows =
+        static_cast<int>(itemCount / kGridCols + (itemCount % kGridCols != 0));
+    const int maxOffset = std::max(0, totalRows - visibleRows);
+    const int focusRow = fFocusIndex / kGridCols;
+    if (focusRow < fScrollOffset) {
+        fScrollOffset = focusRow;
+    } else if (focusRow >= fScrollOffset + visibleRows) {
+        fScrollOffset = focusRow - visibleRows + 1;
+    }
+    if (fScrollOffset > maxOffset) {
+        fScrollOffset = maxOffset;
+    }
+    if (fScrollOffset < 0) {
+        fScrollOffset = 0;
     }
 }
 
@@ -156,11 +170,10 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         rebuildTitleCache(cellW);
     }
 
-    const int selectedIdx = fSelectedRow * kGridCols + fSelectedCol;
-    const int selectedRowGlobal = fScrollOffset + fSelectedRow;
+    const int focusRow = fFocusIndex / kGridCols;
 
     for (int row = 0; row < kGridRows; ++row) {
-        bool rowHasHighlight = (fScrollOffset + row) == selectedRowGlobal;
+        bool rowHasHighlight = (fScrollOffset + row) == focusRow;
 
         for (int col = 0; col < kGridCols; ++col) {
             int idx = (fScrollOffset + row) * kGridCols + col;
@@ -201,7 +214,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             canvas->drawImageRect(img, dstRect, SkSamplingOptions(), rowHasHighlight ? nullptr : &fDimPaint);
             canvas->restore();
 
-            if (idx == selectedIdx) {
+            if (idx == fFocusIndex) {
                 SkRect selRect = dstRect.makeOutset(kSelectionOffset, kSelectionOffset);
                 SkRRect selRRect = SkRRect::MakeRectXY(selRect,
                     kCornerRadius + kSelectionOffset, kCornerRadius + kSelectionOffset);
@@ -212,7 +225,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
                 float titleX = cellX + (cellW - fTitleCache[idx].width) * 0.5f;
                 float titleY = cellY + cellH + kTitleSpace * 0.75f;
 
-                if (idx == selectedIdx) {
+                if (idx == fFocusIndex) {
                     float maxWidth = cellW * 0.9f;
                     float textY = titleY;
                     drawScrollingText(canvas, fTitleCache[idx].fullText, titleX, textY, maxWidth, fTitlePaint, time);
@@ -304,6 +317,13 @@ bool SkiaRenderer::pollInputEvent(std::pair<int, bool>& event) {
     return true;
 }
 
+void SkiaRenderer::clearInputQueue() {
+    std::lock_guard<std::mutex> lock(fInputMutex);
+    while (!fInputQueue.empty()) {
+        fInputQueue.pop();
+    }
+}
+
 void SkiaRenderer::processInputEvent(int key, bool pressed) {
     if (!pressed) return;
 
@@ -315,59 +335,91 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     }
 
     if (fIsScrolling) {
-        finishScroll();
+        return;
     }
 
-    int visibleRows = kGridRows;
-    int totalRows = static_cast<int>(fPosterImages.size() / kGridCols + (fPosterImages.size() % kGridCols != 0));
-    int maxOffset = totalRows - visibleRows;
+    const int itemCount = static_cast<int>(fPosterImages.size());
+    if (itemCount <= 0) {
+        return;
+    }
 
-    const int selectedIdx = (fScrollOffset + fSelectedRow) * kGridCols + fSelectedCol;
+    const int maxIndex = itemCount - 1;
+    const int visibleRows = kGridRows;
+    const int totalRows =
+        static_cast<int>(static_cast<size_t>(itemCount) / kGridCols + (itemCount % kGridCols != 0));
+    const int maxOffset = std::max(0, totalRows - visibleRows);
 
     if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
-        if (selectedIdx >= 0 && selectedIdx < static_cast<int>(fMovies.size()) &&
-            selectedIdx < static_cast<int>(fPosterImages.size()) && fPosterImages[selectedIdx]) {
+        if (fFocusIndex >= 0 && fFocusIndex < static_cast<int>(fMovies.size()) &&
+            fFocusIndex < static_cast<int>(fPosterImages.size()) && fPosterImages[fFocusIndex]) {
             fDetailMode = true;
-            fDetailIndex = selectedIdx;
+            fDetailIndex = fFocusIndex;
         }
         return;
     }
 
+    int focusRow = fFocusIndex / kGridCols;
+    int focusCol = fFocusIndex % kGridCols;
+    bool changed = false;
+
     switch (key) {
         case GLFW_KEY_UP:
-            if (fSelectedRow > 0) {
-                fSelectedRow--;
-                if (fSelectedRow < fScrollOffset && fScrollOffset > 0) {
+            if (focusRow > 0) {
+                fFocusIndex -= kGridCols;
+                changed = true;
+                focusRow = fFocusIndex / kGridCols;
+                if (focusRow < fScrollOffset && fScrollOffset > 0) {
                     fTargetOffset = fScrollOffset - 1;
                     fIsScrolling = true;
                     fScrollProgress = 0.0f;
-                    fScrollStartTime = glfwGetTime();
+                    fScrollStartTime = static_cast<float>(glfwGetTime());
                     fScrollingDown = false;
                 }
             }
             break;
         case GLFW_KEY_DOWN:
-            if (fSelectedRow < totalRows - 1) {
-                fSelectedRow++;
-                if (fSelectedRow >= fScrollOffset + visibleRows && fScrollOffset < maxOffset) {
+            if (focusRow < totalRows - 1) {
+                int nextIdx = (focusRow + 1) * kGridCols + focusCol;
+                if (nextIdx > maxIndex) {
+                    nextIdx = maxIndex;
+                }
+                if (nextIdx != fFocusIndex) {
+                    fFocusIndex = nextIdx;
+                    changed = true;
+                }
+                focusRow = fFocusIndex / kGridCols;
+                if (focusRow >= fScrollOffset + visibleRows && fScrollOffset < maxOffset) {
                     fTargetOffset = fScrollOffset + 1;
                     fIsScrolling = true;
                     fScrollProgress = 0.0f;
-                    fScrollStartTime = glfwGetTime();
+                    fScrollStartTime = static_cast<float>(glfwGetTime());
                     fScrollingDown = true;
                 }
             }
             break;
         case GLFW_KEY_LEFT:
-            if (fSelectedCol > 0) fSelectedCol--;
+            if (focusCol > 0) {
+                fFocusIndex--;
+                changed = true;
+            }
             break;
         case GLFW_KEY_RIGHT:
-            if (fSelectedCol < kGridCols - 1) fSelectedCol++;
+            if (focusCol < kGridCols - 1 && fFocusIndex < maxIndex) {
+                fFocusIndex++;
+                changed = true;
+            }
             break;
     }
 
-    fIsTextScrolling = true;
-    fScrollingTextStartTime = glfwGetTime();
+    if (changed) {
+        fFocusIndex = std::max(0, std::min(fFocusIndex, maxIndex));
+        fIsTextScrolling = true;
+        fScrollingTextStartTime = glfwGetTime();
+    }
+
+    if (fIsScrolling) {
+        clearInputQueue();
+    }
 }
 
 void SkiaRenderer::drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth, SkPaint& paint, float time) {
@@ -375,7 +427,7 @@ void SkiaRenderer::drawScrollingText(SkCanvas* canvas, const std::string& text, 
 
     if (fTitleCache.empty()) return;
 
-    size_t idx = fSelectedRow * kGridCols + fSelectedCol;
+    size_t idx = static_cast<size_t>(fFocusIndex);
     if (idx >= fTitleCache.size()) return;
 
     float textWidth = fTitleCache[idx].textWidth;

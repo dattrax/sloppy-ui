@@ -57,10 +57,11 @@ public:
 
     void enqueueInputEvent(int key, bool pressed);
     bool pollInputEvent(std::pair<int, bool>& event);
+    void clearInputQueue();
     void processInputEvent(int key, bool pressed);
 
-    int selectedRow() const { return fSelectedRow; }
-    int selectedCol() const { return fSelectedCol; }
+    bool isScrolling() const { return fIsScrolling; }
+    int focusIndex() const { return fFocusIndex; }
 
 private:
     sk_sp<GrDirectContext> fContext;
@@ -98,8 +99,7 @@ private:
     static constexpr float kTextScrollSpeed = 60.0f;
     static constexpr float kTextScrollPauseDuration = 2.5f;
 
-    int fSelectedRow = 0;
-    int fSelectedCol = 0;
+    int fFocusIndex = 0;
     int fScrollOffset = 0;
     int fTargetOffset = 0;
     float fScrollProgress = 0.0f;

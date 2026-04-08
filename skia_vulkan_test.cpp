@@ -301,6 +301,9 @@ static int runRenderLoop(AppState& state) {
         glfwWaitEventsTimeout(kIdleFrameWait);
 
         if (state.inputProcessor) {
+            if (state.skiaRenderer.isScrolling()) {
+                state.skiaRenderer.clearInputQueue();
+            }
             std::pair<int, bool> event;
             while (state.skiaRenderer.pollInputEvent(event)) {
                 state.skiaRenderer.processInputEvent(event.first, event.second);
