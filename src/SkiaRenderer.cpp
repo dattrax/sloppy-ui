@@ -9,6 +9,7 @@
 #include "include/core/SkFontMgr.h"
 #include "include/ports/SkFontMgr_empty.h"
 #include "include/core/SkImage.h"
+#include "include/core/SkImageInfo.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkBlurTypes.h"
 #include "include/core/SkColorFilter.h"
@@ -32,12 +33,278 @@
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <cstring>
 #include <string>
 #include <cstdint>
 #include <vector>
 #include <memory>
 #include <sstream>
 #include <GLFW/glfw3.h>
+
+bool SkiaRenderer::makeLoadingPlaceholder() {
+    static const char kLoadingLabel[] = "Loading";
+
+    SkBitmap bitmap;
+    if (!bitmap.tryAllocPixels(SkImageInfo::Make(
+            kLoadingPlaceholderWidth,
+            kLoadingPlaceholderHeight,
+            kRGBA_8888_SkColorType,
+            kPremul_SkAlphaType))) {
+        return false;
+    }
+    bitmap.eraseColor(SK_ColorBLACK);
+
+    if (fTypeface) {
+        SkFont font(fTypeface, kLoadingPlaceholderFontSize);
+        font.setEdging(SkFont::Edging::kAntiAlias);
+        font.setSubpixel(false);
+
+        sk_sp<SkTextBlob> blob = SkTextBlob::MakeFromText(
+            kLoadingLabel, std::strlen(kLoadingLabel), font, SkTextEncoding::kUTF8);
+        if (blob) {
+            float textW =
+                font.measureText(kLoadingLabel, std::strlen(kLoadingLabel), SkTextEncoding::kUTF8);
+            SkFontMetrics fm;
+            font.getMetrics(&fm);
+            float x = (static_cast<float>(kLoadingPlaceholderWidth) - textW) * 0.5f;
+            float baselineY = static_cast<float>(kLoadingPlaceholderHeight) * 0.5f -
+                (fm.fAscent + fm.fDescent) * 0.5f;
+
+            SkCanvas canvas(bitmap);
+            SkPaint paint;
+            paint.setAntiAlias(true);
+            paint.setColor(SK_ColorWHITE);
+            canvas.drawTextBlob(blob, x, baselineY, paint);
+        }
+    }
+
+    bitmap.setImmutable();
+    sk_sp<SkImage> raster = SkImages::RasterFromBitmap(bitmap);
+    if (!raster) {
+        return false;
+    }
+    sk_sp<SkImage> gpu = SkImages::TextureFromImage(fContext.get(), raster.get());
+    fPosterPlaceholder = gpu ? std::move(gpu) : std::move(raster);
+    return static_cast<bool>(fPosterPlaceholder);
+}
+
+void SkiaRenderer::decodeThreadMain() {
+    for (;;) {
+        DecodeJob job;
+        {
+            std::unique_lock<std::mutex> lock(fDecodeMutex);
+            fDecodeCv.wait(lock, [&] { return fDecodeThreadExit.load() || !fPendingJobs.empty(); });
+            if (fPendingJobs.empty()) {
+                if (fDecodeThreadExit.load()) {
+                    return;
+                }
+                continue;
+            }
+            job = fPendingJobs.front();
+            fPendingJobs.pop_front();
+        }
+
+        std::unique_ptr<SkBitmap> bitmap;
+        bool ok = false;
+        if (job.fMovieIndex >= 0 && job.fMovieIndex < static_cast<int>(fMovies.size())) {
+            std::string path = "assets/" + fMovies[job.fMovieIndex].filename;
+            sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str());
+            if (data) {
+                std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(data);
+                if (codec) {
+                    bitmap = std::make_unique<SkBitmap>();
+                    if (bitmap->tryAllocPixels(codec->getInfo())) {
+                        if (codec->getPixels(bitmap->info(), bitmap->getPixels(), bitmap->rowBytes()) ==
+                            SkCodec::kSuccess) {
+                            bitmap->setImmutable();
+                            ok = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        DecodedCompletion completion;
+        completion.fMovieIndex = job.fMovieIndex;
+        completion.fGeneration = job.fGeneration;
+        completion.fSuccess = ok && bitmap != nullptr;
+        if (completion.fSuccess) {
+            completion.fBitmap = std::move(bitmap);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(fDecodeMutex);
+            fCompletedDecodes.push_back(std::move(completion));
+        }
+    }
+}
+
+void SkiaRenderer::enqueueDecodeJob(int movieIndex, uint32_t generation) {
+    std::lock_guard<std::mutex> lock(fDecodeMutex);
+    for (auto it = fPendingJobs.begin(); it != fPendingJobs.end();) {
+        if (it->fMovieIndex == movieIndex) {
+            it = fPendingJobs.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    fPendingJobs.push_back(DecodeJob{movieIndex, generation});
+    trimDecodeJobQueueLocked();
+    fDecodeCv.notify_one();
+}
+
+void SkiaRenderer::trimDecodeJobQueueLocked() {
+    while (fPendingJobs.size() > kMaxPendingDecodeJobs) {
+        DecodeJob dropped = fPendingJobs.front();
+        fPendingJobs.pop_front();
+        if (dropped.fMovieIndex >= 0 &&
+            dropped.fMovieIndex < static_cast<int>(fPosterSlots.size())) {
+            PosterSlot& slot = fPosterSlots[dropped.fMovieIndex];
+            slot.fLoadGeneration++;
+            if (!slot.fImage) {
+                slot.fState = PosterState::Empty;
+            }
+        }
+    }
+}
+
+void SkiaRenderer::requestPosterDecode(int movieIndex) {
+    if (movieIndex < 0 || movieIndex >= static_cast<int>(fMovies.size())) {
+        return;
+    }
+    PosterSlot& slot = fPosterSlots[movieIndex];
+    if (slot.fState == PosterState::Ready && slot.fImage) {
+        return;
+    }
+    if (slot.fState == PosterState::Failed) {
+        return;
+    }
+    if (slot.fState == PosterState::Loading) {
+        return;
+    }
+    slot.fLoadGeneration++;
+    uint32_t gen = slot.fLoadGeneration;
+    slot.fState = PosterState::Loading;
+    enqueueDecodeJob(movieIndex, gen);
+}
+
+void SkiaRenderer::drainDecodeCompletions() {
+    for (;;) {
+        DecodedCompletion completion;
+        {
+            std::lock_guard<std::mutex> lock(fDecodeMutex);
+            if (fCompletedDecodes.empty()) {
+                break;
+            }
+            completion = std::move(fCompletedDecodes.front());
+            fCompletedDecodes.pop_front();
+        }
+
+        if (completion.fMovieIndex < 0 ||
+            completion.fMovieIndex >= static_cast<int>(fPosterSlots.size())) {
+            continue;
+        }
+        PosterSlot& slot = fPosterSlots[completion.fMovieIndex];
+        if (completion.fGeneration != slot.fLoadGeneration) {
+            continue;
+        }
+        if (!completion.fSuccess || !completion.fBitmap) {
+            slot.fState = PosterState::Failed;
+            slot.fImage.reset();
+            continue;
+        }
+
+        sk_sp<SkImage> raster = SkImages::RasterFromBitmap(*completion.fBitmap);
+        if (!raster) {
+            slot.fState = PosterState::Failed;
+            slot.fImage.reset();
+            continue;
+        }
+
+        sk_sp<SkImage> gpu = SkImages::TextureFromImage(fContext.get(), raster.get());
+        slot.fImage = gpu ? std::move(gpu) : std::move(raster);
+        slot.fState = PosterState::Ready;
+    }
+}
+
+void SkiaRenderer::evictPosterCache(double now, const std::vector<int>&) {
+    bool evictedAny = false;
+    std::vector<int> resident;
+    resident.reserve(fPosterSlots.size());
+    for (int i = 0; i < static_cast<int>(fPosterSlots.size()); ++i) {
+        PosterSlot& slot = fPosterSlots[i];
+        if (slot.fState == PosterState::Ready && slot.fImage) {
+            if (now - slot.fLastUsed > kPosterEvictIdleSeconds) {
+                slot.fImage.reset();
+                slot.fState = PosterState::Empty;
+                slot.fLoadGeneration++;
+                evictedAny = true;
+            } else {
+                resident.push_back(i);
+            }
+        }
+    }
+
+    while (resident.size() > kMaxResidentPosters) {
+        int oldestIdx = resident[0];
+        double oldestT = fPosterSlots[oldestIdx].fLastUsed;
+        for (int idx : resident) {
+            if (fPosterSlots[idx].fLastUsed < oldestT) {
+                oldestT = fPosterSlots[idx].fLastUsed;
+                oldestIdx = idx;
+            }
+        }
+        PosterSlot& slot = fPosterSlots[oldestIdx];
+        slot.fImage.reset();
+        slot.fState = PosterState::Empty;
+        slot.fLoadGeneration++;
+        evictedAny = true;
+        resident.erase(std::find(resident.begin(), resident.end(), oldestIdx));
+    }
+
+    if (evictedAny && fContext) {
+        fContext->purgeUnlockedResources(GrPurgeResourceOptions::kAllResources);
+    }
+}
+
+void SkiaRenderer::updatePosterCache(double now) {
+    drainDecodeCompletions();
+
+    std::vector<int> touched;
+    touched.reserve(static_cast<size_t>(kGridCols * kGridRows) + 1u);
+    if (fDetailMode) {
+        if (fDetailIndex >= 0 && fDetailIndex < static_cast<int>(fMovies.size())) {
+            touched.push_back(fDetailIndex);
+        }
+    } else {
+        for (int row = 0; row < kGridRows; ++row) {
+            for (int col = 0; col < kGridCols; ++col) {
+                int idx = (fScrollOffset + row) * kGridCols + col;
+                if (idx < static_cast<int>(fMovies.size())) {
+                    touched.push_back(idx);
+                }
+            }
+        }
+    }
+
+    for (int idx : touched) {
+        fPosterSlots[idx].fLastUsed = now;
+        requestPosterDecode(idx);
+    }
+
+    evictPosterCache(now, touched);
+}
+
+sk_sp<SkImage> SkiaRenderer::posterForIndex(int movieIndex) const {
+    if (movieIndex < 0 || movieIndex >= static_cast<int>(fPosterSlots.size())) {
+        return fPosterPlaceholder;
+    }
+    const PosterSlot& slot = fPosterSlots[movieIndex];
+    if (slot.fState == PosterState::Ready && slot.fImage) {
+        return slot.fImage;
+    }
+    return fPosterPlaceholder;
+}
 
 bool SkiaRenderer::create(const CreateInfo& info) {
     info.backendContext->fMemoryAllocator =
@@ -50,6 +317,8 @@ bool SkiaRenderer::create(const CreateInfo& info) {
         return false;
     }
 
+    fContext->setResourceCacheLimit(kMaxGpuResourceCacheBytes);
+
     info.extensions->init(
         info.backendContext->fGetProc,
         info.instance,
@@ -61,30 +330,24 @@ bool SkiaRenderer::create(const CreateInfo& info) {
 
     if (!fMovies.loadFromFile("movies.json")) {
         fprintf(stderr, "Warning: could not load movies.json (run from build dir or set cwd)\n");
-    } else {
-        fPosterImages.reserve(fMovies.size());
-        for (size_t i = 0; i < fMovies.size(); ++i) {
-            std::string path = "assets/" + fMovies[i].filename;
-            sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str());
-            if (!data) continue;
-            std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(data);
-            if (!codec) continue;
-            SkBitmap bitmap;
-            if (!bitmap.tryAllocPixels(codec->getInfo())) continue;
-            if (codec->getPixels(bitmap.info(), bitmap.getPixels(), bitmap.rowBytes()) != SkCodec::kSuccess) continue;
-            bitmap.setImmutable();
-            sk_sp<SkImage> raster = SkImages::RasterFromBitmap(bitmap);
-            if (!raster) continue;
-            sk_sp<SkImage> gpu = SkImages::TextureFromImage(fContext.get(), raster.get());
-            fPosterImages.push_back(gpu ? std::move(gpu) : std::move(raster));
-        }
     }
+
+    fPosterSlots.resize(fMovies.size());
 
     sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Empty();
     fTypeface = mgr->makeFromFile("assets/Roboto-Regular.ttf");
     if (!fTypeface) {
         fprintf(stderr, "Warning: could not load any font for text rendering\n");
     }
+
+    if (!makeLoadingPlaceholder()) {
+        fprintf(stderr, "Failed to create poster loading placeholder texture.\n");
+        destroy();
+        return false;
+    }
+
+    fDecodeThreadExit = false;
+    fDecodeThread = std::thread(&SkiaRenderer::decodeThreadMain, this);
 
     fTitleFont = SkFont(fTypeface, kTitleFontSize);
     fDetailTitleFont = SkFont(fTypeface, kDetailTitleFontSize);
@@ -109,8 +372,20 @@ bool SkiaRenderer::create(const CreateInfo& info) {
 }
 
 void SkiaRenderer::destroy() {
+    fDecodeThreadExit = true;
+    fDecodeCv.notify_all();
+    if (fDecodeThread.joinable()) {
+        fDecodeThread.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(fDecodeMutex);
+        fPendingJobs.clear();
+        fCompletedDecodes.clear();
+    }
+
     fTitleCache.clear();
-    fPosterImages.clear();
+    fPosterSlots.clear();
+    fPosterPlaceholder.reset();
     fContext.reset();
 }
 
@@ -119,7 +394,7 @@ void SkiaRenderer::finishScroll() {
     fScrollOffset = fTargetOffset;
     fIsScrolling = false;
     const int visibleRows = kGridRows;
-    const size_t itemCount = fPosterImages.size();
+    const size_t itemCount = fMovies.size();
     if (itemCount == 0) {
         return;
     }
@@ -141,6 +416,9 @@ void SkiaRenderer::finishScroll() {
 }
 
 void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
+    double now = glfwGetTime();
+    updatePosterCache(now);
+
     if (fDetailMode) {
         drawDetailView(canvas, width, height);
         return;
@@ -177,11 +455,13 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
 
         for (int col = 0; col < kGridCols; ++col) {
             int idx = (fScrollOffset + row) * kGridCols + col;
-            if (idx >= static_cast<int>(fPosterImages.size())) {
+            if (idx >= static_cast<int>(fMovies.size())) {
                 continue;
             }
-            const sk_sp<SkImage>& img = fPosterImages[idx];
-            if (!img) continue;
+            sk_sp<SkImage> img = posterForIndex(idx);
+            if (!img) {
+                continue;
+            }
 
             float cellX = kPadding + col * (cellW + kPadding);
             float cellY = kPadding + row * (cellH + kPadding + kTitleSpace) - scrollY;
@@ -197,18 +477,6 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
             SkRRect rrect = SkRRect::MakeRectXY(dstRect, kCornerRadius, kCornerRadius);
 
-#if 0
-            // Draw simple offset shadow (no lighting simulation)
-            SkRect shadowRect = dstRect.makeOffset(8.0f, 8.0f);
-            SkRRect shadowRRect = SkRRect::MakeRectXY(shadowRect, kCornerRadius, kCornerRadius);
-            SkPaint shadowPaint;
-            shadowPaint.setAntiAlias(true);
-            shadowPaint.setColor(SkColorSetA(SK_ColorBLACK, 0x20));
-            shadowPaint.setMaskFilter(SkMaskFilter::MakeBlur(kSolid_SkBlurStyle, 8.0f));
-            canvas->drawRRect(shadowRRect, shadowPaint);
-#endif
-
-            // Then draw the image on top
             canvas->save();
             canvas->clipRRect(rrect, true);
             canvas->drawImageRect(img, dstRect, SkSamplingOptions(), rowHasHighlight ? nullptr : &fDimPaint);
@@ -338,7 +606,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
         return;
     }
 
-    const int itemCount = static_cast<int>(fPosterImages.size());
+    const int itemCount = static_cast<int>(fMovies.size());
     if (itemCount <= 0) {
         return;
     }
@@ -350,8 +618,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     const int maxOffset = std::max(0, totalRows - visibleRows);
 
     if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
-        if (fFocusIndex >= 0 && fFocusIndex < static_cast<int>(fMovies.size()) &&
-            fFocusIndex < static_cast<int>(fPosterImages.size()) && fPosterImages[fFocusIndex]) {
+        if (fFocusIndex >= 0 && fFocusIndex < itemCount) {
             fDetailMode = true;
             fDetailIndex = fFocusIndex;
         }
@@ -525,10 +792,7 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
     }
 
     const Movie& movie = fMovies[fDetailIndex];
-    sk_sp<SkImage> poster;
-    if (fDetailIndex < static_cast<int>(fPosterImages.size())) {
-        poster = fPosterImages[fDetailIndex];
-    }
+    sk_sp<SkImage> poster = posterForIndex(fDetailIndex);
 
     if (poster) {
         float imgW = static_cast<float>(poster->width());
@@ -584,9 +848,7 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
     SkFontMetrics fmMeta;
     fDetailMetaFont.getMetrics(&fmMeta);
 
-    const float titleLineHeight = fmTitle.fDescent - fmTitle.fAscent;
     const float bodyLineHeight = fmBody.fDescent - fmBody.fAscent + 4.0f;
-    const float metaLineHeight = fmMeta.fDescent - fmMeta.fAscent;
 
     const float metaBaseline =
         static_cast<float>(height) - kDetailPanelPadding - fmMeta.fDescent;

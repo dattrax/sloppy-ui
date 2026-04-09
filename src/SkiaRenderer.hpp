@@ -8,6 +8,7 @@
 #include "Movie.hpp"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
+#include "include/core/SkBitmap.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkSurface.h"
@@ -22,7 +23,12 @@
 #include <string>
 #include <cstdint>
 #include <queue>
+#include <deque>
 #include <mutex>
+#include <condition_variable>
+#include <thread>
+#include <atomic>
+#include <memory>
 #include <utility>
 
 class SkiaRenderer {
@@ -64,12 +70,39 @@ public:
     int focusIndex() const { return fFocusIndex; }
 
 private:
+    enum class PosterState {
+        Empty,
+        Loading,
+        Ready,
+        Failed,
+    };
+
+    struct PosterSlot {
+        sk_sp<SkImage> fImage;
+        PosterState fState = PosterState::Empty;
+        double fLastUsed = 0.0;
+        uint32_t fLoadGeneration = 0;
+    };
+
+    struct DecodeJob {
+        int fMovieIndex = -1;
+        uint32_t fGeneration = 0;
+    };
+
+    struct DecodedCompletion {
+        int fMovieIndex = -1;
+        uint32_t fGeneration = 0;
+        bool fSuccess = false;
+        std::unique_ptr<SkBitmap> fBitmap;
+    };
+
     sk_sp<GrDirectContext> fContext;
     SkPaint fTitlePaint;
     SkPaint fSelectionPaint;
     SkPaint fDimPaint;
     MovieDatabase fMovies;
-    std::vector<sk_sp<SkImage>> fPosterImages;
+    std::vector<PosterSlot> fPosterSlots;
+    sk_sp<SkImage> fPosterPlaceholder;
     sk_sp<SkTypeface> fTypeface;
     SkFont fTitleFont;
     SkFont fDetailTitleFont;
@@ -77,6 +110,13 @@ private:
     SkFont fDetailMetaFont;
     SkPaint fDetailTextPaint;
     SkColorMatrix fMatrix;
+
+    std::mutex fDecodeMutex;
+    std::condition_variable fDecodeCv;
+    std::deque<DecodeJob> fPendingJobs;
+    std::deque<DecodedCompletion> fCompletedDecodes;
+    std::thread fDecodeThread;
+    std::atomic<bool> fDecodeThreadExit{false};
 
     struct TitleCache {
         std::string text;
@@ -98,6 +138,15 @@ private:
     static constexpr float kSelectionOffset = 0.0f;
     static constexpr float kTextScrollSpeed = 60.0f;
     static constexpr float kTextScrollPauseDuration = 2.5f;
+
+    static constexpr double kPosterEvictIdleSeconds = 20.0;
+    static constexpr size_t kMaxResidentPosters = 24;
+    static constexpr size_t kMaxPendingDecodeJobs = 16;
+    static constexpr size_t kMaxGpuResourceCacheBytes = 256u * 1024u * 1024u;
+
+    static constexpr int kLoadingPlaceholderWidth = 960;
+    static constexpr int kLoadingPlaceholderHeight = 540;
+    static constexpr float kLoadingPlaceholderFontSize = 48.0f;
 
     int fFocusIndex = 0;
     int fScrollOffset = 0;
@@ -136,4 +185,14 @@ private:
 
     bool fDetailMode = false;
     int fDetailIndex = 0;
+
+    bool makeLoadingPlaceholder();
+    void decodeThreadMain();
+    void drainDecodeCompletions();
+    void enqueueDecodeJob(int movieIndex, uint32_t generation);
+    void trimDecodeJobQueueLocked();
+    void requestPosterDecode(int movieIndex);
+    void updatePosterCache(double now);
+    void evictPosterCache(double now, const std::vector<int>& touched);
+    sk_sp<SkImage> posterForIndex(int movieIndex) const;
 };
