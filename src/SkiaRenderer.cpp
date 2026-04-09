@@ -335,7 +335,7 @@ bool SkiaRenderer::create(const CreateInfo& info) {
     fPosterSlots.resize(fMovies.size());
 
     sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Empty();
-    fTypeface = mgr->makeFromFile("assets/Roboto-Regular.ttf");
+    fTypeface = mgr->makeFromFile("assets/GoogleSans-Regular.ttf");
     if (!fTypeface) {
         fprintf(stderr, "Warning: could not load any font for text rendering\n");
     }
