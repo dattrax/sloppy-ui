@@ -29,6 +29,13 @@ else()
 endif()
 
 find_package(Vulkan REQUIRED)
+include(FetchContent)
+FetchContent_Declare(fetch_vk_bootstrap
+    GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
+    GIT_TAG v1.3.225
+)
+FetchContent_MakeAvailable(fetch_vk_bootstrap)
+
 find_package(Freetype REQUIRED)
 find_package(Boost REQUIRED COMPONENTS json)
 find_package(ZLIB REQUIRED)
@@ -116,7 +123,8 @@ target_link_libraries(sloppy_ui PRIVATE
   JPEG::JPEG
   ${WEBP_LIBRARIES}
   ${glfw3_LIBRARIES}
-  pthread dl
+  vk-bootstrap::vk-bootstrap
+  ${CMAKE_DL_LIBS}
 )
 
 # Symlink assets and movies.json from source into build dir for run-from-build convenience
