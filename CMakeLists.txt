@@ -1,12 +1,12 @@
-# CMake project to build a Skia Vulkan backend test.
+# Sloppy UI - Skia Vulkan application.
 # Prerequisites:
-#   1. Build Skia with Vulkan: bin/gn gen out/Vulkan --args='skia_use_vulkan=true' && ninja -C out/Vulkan skia'
+#   1. Build Skia with Vulkan: bin/gn gen out/Release --args='skia_use_vulkan=true is_official_build=true' && ninja -C out/Release skia'
 #   2. Sync deps so VMA is available: python3 tools/git-sync-deps (from Skia root)
 #   3. Install Vulkan SDK / libvulkan-dev on your system
 #   4. Install GLFW: glfw-devel (Fedora) or libglfw3-dev (Debian) for windowed display
 
 cmake_minimum_required(VERSION 3.16)
-project(skia_vulkan_test CXX)
+project(sloppy_ui CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -77,8 +77,8 @@ add_compile_definitions(
 )
 
 # Main executable
-add_executable(skia_vulkan_test
-  skia_vulkan_test.cpp
+add_executable(sloppy_ui
+  sloppy_ui.cpp
   src/SkiaRenderer.cpp
   src/Swapchain.cpp
   src/SwapchainImage.cpp
@@ -86,11 +86,11 @@ add_executable(skia_vulkan_test
   src/InputProcessor.cpp
 )
 
-target_include_directories(skia_vulkan_test PRIVATE
+target_include_directories(sloppy_ui PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_include_directories(skia_vulkan_test SYSTEM PRIVATE
+target_include_directories(sloppy_ui SYSTEM PRIVATE
   ${SKIA_INCLUDES}
   ${glfw3_INCLUDE_DIRS}
 )
@@ -105,7 +105,7 @@ foreach(LIB_NAME ${SKIA_LIB_NAMES})
   endif()
 endforeach()
 
-target_link_libraries(skia_vulkan_test PRIVATE
+target_link_libraries(sloppy_ui PRIVATE
   ${SKIA_LIB_PATH}
   Vulkan::Vulkan
   Freetype::Freetype

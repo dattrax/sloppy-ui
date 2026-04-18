@@ -4,20 +4,20 @@
 
 ### Build
 ```bash
-cd /home/jim/vulkan_skia/build
+cd /home/jim/sloppy-ui/build
 cmake --build . -j$(nproc)
 ```
 
 ### Run Application
 ```bash
-cd /home/jim/vulkan_skia/build
-./skia_vulkan_test
+cd /home/jim/sloppy-ui/build
+./sloppy_ui
 ```
 Note: Run from build directory or ensure assets/ and movies.json are accessible via symlinks.
 
 ### Clean Build
 ```bash
-cd /home/jim/vulkan_skia/build
+cd /home/jim/sloppy-ui/build
 rm -rf *
 cmake ..
 cmake --build . -j$(nproc)
