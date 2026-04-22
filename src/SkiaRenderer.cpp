@@ -1,4 +1,5 @@
 #include "SkiaRenderer.hpp"
+#include "PlatformInput.hpp"
 #include "include/codec/SkCodec.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColor.h"
@@ -39,7 +40,6 @@
 #include <vector>
 #include <memory>
 #include <sstream>
-#include <GLFW/glfw3.h>
 
 bool SkiaRenderer::makeLoadingPlaceholder() {
     static const char kLoadingLabel[] = "Loading";
@@ -416,7 +416,7 @@ void SkiaRenderer::finishScroll() {
 }
 
 void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
-    double now = glfwGetTime();
+    double now = platform::nowSeconds();
     updatePosterCache(now);
 
     if (fDetailMode) {
@@ -596,7 +596,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     if (!pressed) return;
 
     if (fDetailMode) {
-        if (key == GLFW_KEY_ESCAPE) {
+        if (key == platform::kKeyEscape) {
             fDetailMode = false;
         }
         return;
@@ -617,7 +617,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
         static_cast<int>(static_cast<size_t>(itemCount) / kGridCols + (itemCount % kGridCols != 0));
     const int maxOffset = std::max(0, totalRows - visibleRows);
 
-    if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
+    if (key == platform::kKeyEnter || key == platform::kKeyKpEnter) {
         if (fFocusIndex >= 0 && fFocusIndex < itemCount) {
             fDetailMode = true;
             fDetailIndex = fFocusIndex;
@@ -630,7 +630,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     bool changed = false;
 
     switch (key) {
-        case GLFW_KEY_UP:
+        case platform::kKeyUp:
             if (focusRow > 0) {
                 fFocusIndex -= kGridCols;
                 changed = true;
@@ -639,12 +639,12 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
                     fTargetOffset = fScrollOffset - 1;
                     fIsScrolling = true;
                     fScrollProgress = 0.0f;
-                    fScrollStartTime = static_cast<float>(glfwGetTime());
+                    fScrollStartTime = static_cast<float>(platform::nowSeconds());
                     fScrollingDown = false;
                 }
             }
             break;
-        case GLFW_KEY_DOWN:
+        case platform::kKeyDown:
             if (focusRow < totalRows - 1) {
                 int nextIdx = (focusRow + 1) * kGridCols + focusCol;
                 if (nextIdx > maxIndex) {
@@ -659,18 +659,18 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
                     fTargetOffset = fScrollOffset + 1;
                     fIsScrolling = true;
                     fScrollProgress = 0.0f;
-                    fScrollStartTime = static_cast<float>(glfwGetTime());
+                    fScrollStartTime = static_cast<float>(platform::nowSeconds());
                     fScrollingDown = true;
                 }
             }
             break;
-        case GLFW_KEY_LEFT:
+        case platform::kKeyLeft:
             if (focusCol > 0) {
                 fFocusIndex--;
                 changed = true;
             }
             break;
-        case GLFW_KEY_RIGHT:
+        case platform::kKeyRight:
             if (focusCol < kGridCols - 1 && fFocusIndex < maxIndex) {
                 fFocusIndex++;
                 changed = true;
@@ -681,7 +681,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     if (changed) {
         fFocusIndex = std::max(0, std::min(fFocusIndex, maxIndex));
         fIsTextScrolling = true;
-        fScrollingTextStartTime = glfwGetTime();
+        fScrollingTextStartTime = static_cast<float>(platform::nowSeconds());
     }
 
     if (fIsScrolling) {

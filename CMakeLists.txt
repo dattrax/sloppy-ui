@@ -10,6 +10,16 @@ project(sloppy_ui CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 
+set(SLOPPY_UI_BUILD_MODE "WINDOWED" CACHE STRING "Build mode: WINDOWED or DIRECT_TO_DISPLAY")
+set_property(CACHE SLOPPY_UI_BUILD_MODE PROPERTY STRINGS WINDOWED DIRECT_TO_DISPLAY)
+string(TOUPPER "${SLOPPY_UI_BUILD_MODE}" SLOPPY_UI_BUILD_MODE)
+if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "WINDOWED" AND
+   NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
+  message(FATAL_ERROR
+    "Invalid SLOPPY_UI_BUILD_MODE='${SLOPPY_UI_BUILD_MODE}'. "
+    "Expected WINDOWED or DIRECT_TO_DISPLAY.")
+endif()
+
 # Skia root (allow -DSKIA_ROOT, then env, then parent of this directory)
 if(DEFINED SKIA_ROOT)
   # use cache value from -DSKIA_ROOT
@@ -44,24 +54,26 @@ find_package(JPEG REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WEBP REQUIRED libwebp libwebpdemux)
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-  pkg_check_modules(glfw3 QUIET glfw3)
-endif()
-if(NOT glfw3_FOUND)
-  find_package(glfw3 QUIET)
-endif()
-if(NOT glfw3_FOUND)
-  find_path(GLFW_INCLUDE_DIR NAMES GLFW/glfw3.h)
-  find_library(GLFW_LIBRARY NAMES glfw)
-  if(GLFW_INCLUDE_DIR AND GLFW_LIBRARY)
-    set(glfw3_FOUND TRUE)
-    set(glfw3_INCLUDE_DIRS ${GLFW_INCLUDE_DIR})
-    set(glfw3_LIBRARIES ${GLFW_LIBRARY})
+if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(glfw3 QUIET glfw3)
   endif()
-endif()
-if(NOT glfw3_FOUND)
-  message(FATAL_ERROR "GLFW not found. Install glfw-devel (Fedora) or libglfw3-dev (Debian).")
+  if(NOT glfw3_FOUND)
+    find_package(glfw3 QUIET)
+  endif()
+  if(NOT glfw3_FOUND)
+    find_path(GLFW_INCLUDE_DIR NAMES GLFW/glfw3.h)
+    find_library(GLFW_LIBRARY NAMES glfw)
+    if(GLFW_INCLUDE_DIR AND GLFW_LIBRARY)
+      set(glfw3_FOUND TRUE)
+      set(glfw3_INCLUDE_DIRS ${GLFW_INCLUDE_DIR})
+      set(glfw3_LIBRARIES ${GLFW_LIBRARY})
+    endif()
+  endif()
+  if(NOT glfw3_FOUND)
+    message(FATAL_ERROR "GLFW not found. Install glfw-devel (Fedora) or libglfw3-dev (Debian).")
+  endif()
 endif()
 
 # Include directories for Skia (public include + src for VulkanMemoryAllocatorPriv.h)
@@ -83,6 +95,15 @@ add_compile_definitions(
   $<$<PLATFORM_ID:Linux>:SK_BUILD_FOR_UNIX>
 )
 
+if(SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
+  add_compile_definitions(
+    SLOPPY_UI_DIRECT_TO_DISPLAY=1
+    VK_USE_PLATFORM_DISPLAY_KHR
+  )
+else()
+  add_compile_definitions(SLOPPY_UI_DIRECT_TO_DISPLAY=0)
+endif()
+
 # Main executable
 add_executable(sloppy_ui
   sloppy_ui.cpp
@@ -90,8 +111,11 @@ add_executable(sloppy_ui
   src/Swapchain.cpp
   src/SwapchainImage.cpp
   src/Movie.cpp
-  src/InputProcessor.cpp
 )
+
+if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
+  target_sources(sloppy_ui PRIVATE src/InputProcessor.cpp)
+endif()
 
 target_include_directories(sloppy_ui PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -99,8 +123,12 @@ target_include_directories(sloppy_ui PRIVATE
 
 target_include_directories(sloppy_ui SYSTEM PRIVATE
   ${SKIA_INCLUDES}
-  ${glfw3_INCLUDE_DIRS}
+  ${WEBP_INCLUDE_DIRS}
 )
+
+if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
+  target_include_directories(sloppy_ui SYSTEM PRIVATE ${glfw3_INCLUDE_DIRS})
+endif()
 
 set(SKIA_LIB_NAMES "libskia.a" "libskia.so" "skia.lib")
 set(SKIA_LIB_PATH "")
@@ -122,10 +150,13 @@ target_link_libraries(sloppy_ui PRIVATE
   PNG::PNG
   JPEG::JPEG
   ${WEBP_LIBRARIES}
-  ${glfw3_LIBRARIES}
   vk-bootstrap::vk-bootstrap
   ${CMAKE_DL_LIBS}
 )
+
+if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
+  target_link_libraries(sloppy_ui PRIVATE ${glfw3_LIBRARIES})
+endif()
 
 # Symlink assets and movies.json from source into build dir for run-from-build convenience
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -141,3 +172,4 @@ endif()
 message(STATUS "Skia root: ${SKIA_ROOT}")
 message(STATUS "Skia build: ${SKIA_BUILD_DIR}")
 message(STATUS "Skia library: ${SKIA_LIB_PATH}")
+message(STATUS "Sloppy UI build mode: ${SLOPPY_UI_BUILD_MODE}")

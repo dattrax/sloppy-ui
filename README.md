@@ -38,6 +38,16 @@ cmake --build build
 ./build/sloppy_ui
 ```
 
+Build mode can be selected with `SLOPPY_UI_BUILD_MODE`:
+
+```bash
+# Default:
+cmake -B build -DSKIA_ROOT=/path/to/skia -DSLOPPY_UI_BUILD_MODE=WINDOWED /path/to/this-repo
+
+# Alternate build mode flag:
+cmake -B build -DSKIA_ROOT=/path/to/skia -DSLOPPY_UI_BUILD_MODE=DIRECT_TO_DISPLAY /path/to/this-repo
+```
+
 **CMake variables:** `SKIA_ROOT` (required). `VMA_DIR` – VulkanMemoryAllocator root (default: `$SKIA_ROOT/third_party/externals/vulkanmemoryallocator`).
 
 ## Layout
