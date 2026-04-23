@@ -127,7 +127,10 @@ private:
     };
     std::vector<TitleCache> fTitleCache;
     float fCachedCellW = 0.0f;
+    float fCachedUiScale = -1.0f;
 
+    static constexpr float kDesignWidth = 1280.0f;
+    static constexpr float kDesignHeight = 720.0f;
     static constexpr int kGridCols = 4;
     static constexpr int kGridRows = 3;
     static constexpr float kScrollDuration = 0.25f;
@@ -136,8 +139,11 @@ private:
     static constexpr float kPadding = 8.0f;
     static constexpr float kCornerRadius = 12.0f;
     static constexpr float kSelectionOffset = 0.0f;
+    static constexpr float kSelectionStrokeWidth = 3.0f;
     static constexpr float kTextScrollSpeed = 60.0f;
     static constexpr float kTextScrollPauseDuration = 2.5f;
+    static constexpr float kScrollingTextClipAscent = 20.0f;
+    static constexpr float kScrollingTextClipHeight = 40.0f;
 
     static constexpr double kPosterEvictIdleSeconds = 20.0;
     static constexpr size_t kMaxResidentPosters = 24;
@@ -163,13 +169,15 @@ private:
     std::queue<std::pair<int, bool>> fInputQueue;
     std::mutex fInputMutex;
 
+    static float layoutScale(int width, int height);
+
     void rebuildTitleCache(float cellW);
     void finishScroll();
     float easeInOut(float t) const;
     static std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
-    void drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth, SkPaint& paint, float time);
-
     void drawDetailView(SkCanvas* canvas, int width, int height);
+    void drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth,
+                           SkPaint& paint, float time, float uiScale);
     static std::vector<std::string> wrapTextToLines(const std::string& text, float maxWidth, SkFont& font);
     static std::string formatDetailPrice(const Movie& movie);
     static std::string formatDetailMetadata(const Movie& movie);
@@ -182,6 +190,7 @@ private:
     static constexpr float kDetailPanelPadding = 24.0f;
     static constexpr float kDetailTitleBodyGap = 20.0f;
     static constexpr float kDetailBodyMetaGap = 20.0f;
+    static constexpr float kDetailBodyLineGap = 4.0f;
 
     bool fDetailMode = false;
     int fDetailIndex = 0;

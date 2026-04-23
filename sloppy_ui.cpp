@@ -119,6 +119,14 @@ static bool setup(AppState& state) {
     }
     glfwSetWindowUserPointer(state.window, &state);
 
+    glfwGetFramebufferSize(state.window, &state.width, &state.height);
+    if (state.width < 1) {
+        state.width = kWindowWidth;
+    }
+    if (state.height < 1) {
+        state.height = kWindowHeight;
+    }
+
     uint32_t glfwExtCount = 0;
     const char** glfwExts = glfwGetRequiredInstanceExtensions(&glfwExtCount);
     if (!glfwExts || glfwExtCount == 0) {

@@ -359,7 +359,7 @@ bool SkiaRenderer::create(const CreateInfo& info) {
 
     fSelectionPaint.setStyle(SkPaint::kStroke_Style);
     fSelectionPaint.setColor(SK_ColorWHITE);
-    fSelectionPaint.setStrokeWidth(3.0f);
+    fSelectionPaint.setStrokeWidth(kSelectionStrokeWidth);
     fSelectionPaint.setAntiAlias(true);
 
     fMatrix.setScale(0.8f, 0.8f, 0.8f, 1.0f);
@@ -384,6 +384,8 @@ void SkiaRenderer::destroy() {
     }
 
     fTitleCache.clear();
+    fCachedCellW = 0.0f;
+    fCachedUiScale = -1.0f;
     fPosterSlots.clear();
     fPosterPlaceholder.reset();
     fContext.reset();
@@ -415,6 +417,14 @@ void SkiaRenderer::finishScroll() {
     }
 }
 
+float SkiaRenderer::layoutScale(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return 1.0f;
+    }
+    return std::min(static_cast<float>(width) / kDesignWidth,
+                    static_cast<float>(height) / kDesignHeight);
+}
+
 void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     double now = platform::nowSeconds();
     updatePosterCache(now);
@@ -423,6 +433,12 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         drawDetailView(canvas, width, height);
         return;
     }
+
+    const float uiScale = layoutScale(width, height);
+    if (fTypeface) {
+        fTitleFont.setSize(kTitleFontSize * uiScale);
+    }
+    fSelectionPaint.setStrokeWidth(kSelectionStrokeWidth * uiScale);
 
     if (fIsScrolling) {
         float scrollTime = time - fScrollStartTime;
@@ -441,11 +457,17 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
 
     canvas->clear(SK_ColorGRAY);
 
-    const float cellW = (width - kPadding * (kGridCols + 1)) / kGridCols;
-    const float cellH = (height - kPadding * (kGridRows + 1) - kTitleSpace * kGridRows) / kGridRows;
+    const float pad = kPadding * uiScale;
+    const float titleSpace = kTitleSpace * uiScale;
+    const float cornerR = kCornerRadius * uiScale;
+    const float selOffset = kSelectionOffset * uiScale;
 
-    if (cellW != fCachedCellW) {
+    const float cellW = (width - pad * (kGridCols + 1)) / kGridCols;
+    const float cellH = (height - pad * (kGridRows + 1) - titleSpace * kGridRows) / kGridRows;
+
+    if (cellW != fCachedCellW || uiScale != fCachedUiScale) {
         rebuildTitleCache(cellW);
+        fCachedUiScale = uiScale;
     }
 
     const int focusRow = fFocusIndex / kGridCols;
@@ -463,8 +485,8 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
                 continue;
             }
 
-            float cellX = kPadding + col * (cellW + kPadding);
-            float cellY = kPadding + row * (cellH + kPadding + kTitleSpace) - scrollY;
+            float cellX = pad + col * (cellW + pad);
+            float cellY = pad + row * (cellH + pad + titleSpace) - scrollY;
 
             float imgW = static_cast<float>(img->width());
             float imgH = static_cast<float>(img->height());
@@ -475,7 +497,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             float dstY = cellY + (cellH - dstH) * 0.5f;
 
             SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
-            SkRRect rrect = SkRRect::MakeRectXY(dstRect, kCornerRadius, kCornerRadius);
+            SkRRect rrect = SkRRect::MakeRectXY(dstRect, cornerR, cornerR);
 
             canvas->save();
             canvas->clipRRect(rrect, true);
@@ -483,20 +505,21 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             canvas->restore();
 
             if (idx == fFocusIndex) {
-                SkRect selRect = dstRect.makeOutset(kSelectionOffset, kSelectionOffset);
+                SkRect selRect = dstRect.makeOutset(selOffset, selOffset);
                 SkRRect selRRect = SkRRect::MakeRectXY(selRect,
-                    kCornerRadius + kSelectionOffset, kCornerRadius + kSelectionOffset);
+                    cornerR + selOffset, cornerR + selOffset);
                 canvas->drawRRect(selRRect, fSelectionPaint);
             }
 
             if (idx < static_cast<int>(fTitleCache.size()) && fTitleCache[idx].blob) {
                 float titleX = cellX + (cellW - fTitleCache[idx].width) * 0.5f;
-                float titleY = cellY + cellH + kTitleSpace * 0.75f;
+                float titleY = cellY + cellH + titleSpace * 0.75f;
 
                 if (idx == fFocusIndex) {
                     float maxWidth = cellW * 0.9f;
                     float textY = titleY;
-                    drawScrollingText(canvas, fTitleCache[idx].fullText, titleX, textY, maxWidth, fTitlePaint, time);
+                    drawScrollingText(canvas, fTitleCache[idx].fullText, titleX, textY, maxWidth, fTitlePaint,
+                                      time, uiScale);
                 } else {
                     canvas->drawTextBlob(fTitleCache[idx].blob, titleX, titleY, fTitlePaint);
                 }
@@ -689,7 +712,8 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     }
 }
 
-void SkiaRenderer::drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth, SkPaint& paint, float time) {
+void SkiaRenderer::drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth,
+                                     SkPaint& paint, float time, float uiScale) {
     if (text.empty()) return;
 
     if (fTitleCache.empty()) return;
@@ -705,7 +729,8 @@ void SkiaRenderer::drawScrollingText(SkCanvas* canvas, const std::string& text, 
         return;
     }
 
-    float scrollDuration = textWidth / kTextScrollSpeed;
+    const float scrollSpeed = kTextScrollSpeed * uiScale;
+    float scrollDuration = textWidth / scrollSpeed;
     float pauseTime = scrollDuration + kTextScrollPauseDuration;
     float scrollTime = time - fScrollingTextStartTime;
 
@@ -716,15 +741,17 @@ void SkiaRenderer::drawScrollingText(SkCanvas* canvas, const std::string& text, 
 
     float scrollOffset = 0.0f;
     if (scrollTime < scrollDuration) {
-        scrollOffset = scrollTime * kTextScrollSpeed;
+        scrollOffset = scrollTime * scrollSpeed;
     } else if (scrollTime < pauseTime) {
-        scrollOffset = scrollDuration * kTextScrollSpeed;
+        scrollOffset = scrollDuration * scrollSpeed;
     }
 
     float currentX = (x + maxWidth) - scrollOffset;
 
     canvas->save();
-    SkRect clipRect = SkRect::MakeXYWH(x, y - 20, maxWidth, 40);
+    const float clipAscent = kScrollingTextClipAscent * uiScale;
+    const float clipHeight = kScrollingTextClipHeight * uiScale;
+    SkRect clipRect = SkRect::MakeXYWH(x, y - clipAscent, maxWidth, clipHeight);
     canvas->clipRect(clipRect);
 
     sk_sp<SkTextBlob> blob = SkTextBlob::MakeFromText(text.c_str(), text.size(), fTitleFont, SkTextEncoding::kUTF8);
@@ -787,6 +814,13 @@ std::vector<std::string> SkiaRenderer::wrapTextToLines(const std::string& text, 
 void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
     canvas->clear(SK_ColorBLACK);
 
+    const float s = layoutScale(width, height);
+    if (fTypeface) {
+        fDetailTitleFont.setSize(kDetailTitleFontSize * s);
+        fDetailBodyFont.setSize(kDetailBodyFontSize * s);
+        fDetailMetaFont.setSize(kDetailMetaFontSize * s);
+    }
+
     if (fDetailIndex < 0 || fDetailIndex >= static_cast<int>(fMovies.size())) {
         return;
     }
@@ -837,8 +871,9 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
     canvas->drawRect(SkRect::MakeLTRB(panelLeft, 0.0f, static_cast<float>(width), static_cast<float>(height)),
         solidPanelPaint);
 
-    const float innerLeft = panelLeft + kDetailPanelPadding;
-    const float innerRight = static_cast<float>(width) - kDetailPanelPadding;
+    const float panelPad = kDetailPanelPadding * s;
+    const float innerLeft = panelLeft + panelPad;
+    const float innerRight = static_cast<float>(width) - panelPad;
     const float textMaxW = std::max(1.0f, innerRight - innerLeft);
 
     SkFontMetrics fmTitle;
@@ -848,22 +883,22 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
     SkFontMetrics fmMeta;
     fDetailMetaFont.getMetrics(&fmMeta);
 
-    const float bodyLineHeight = fmBody.fDescent - fmBody.fAscent + 4.0f;
+    const float bodyLineHeight = fmBody.fDescent - fmBody.fAscent + kDetailBodyLineGap * s;
 
     const float metaBaseline =
-        static_cast<float>(height) - kDetailPanelPadding - fmMeta.fDescent;
+        static_cast<float>(height) - panelPad - fmMeta.fDescent;
     const float metaTop = metaBaseline + fmMeta.fAscent;
 
     std::string titleDisplay = ellipsizeText(movie.title, textMaxW, fDetailTitleFont);
     sk_sp<SkTextBlob> titleBlob =
         SkTextBlob::MakeFromText(titleDisplay.c_str(), titleDisplay.size(), fDetailTitleFont, SkTextEncoding::kUTF8);
 
-    const float titleBaseline = kDetailPanelPadding - fmTitle.fAscent;
+    const float titleBaseline = panelPad - fmTitle.fAscent;
     canvas->drawTextBlob(titleBlob, innerLeft, titleBaseline, fDetailTextPaint);
 
     const float titleBottom = titleBaseline + fmTitle.fDescent;
-    const float synopsisTop = titleBottom + kDetailTitleBodyGap;
-    const float synopsisMaxBottom = metaTop - kDetailBodyMetaGap;
+    const float synopsisTop = titleBottom + kDetailTitleBodyGap * s;
+    const float synopsisMaxBottom = metaTop - kDetailBodyMetaGap * s;
     float synopsisAvailable = synopsisMaxBottom - synopsisTop;
     if (synopsisAvailable < bodyLineHeight) {
         synopsisAvailable = bodyLineHeight;
