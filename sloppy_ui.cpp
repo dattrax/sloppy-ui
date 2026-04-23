@@ -100,6 +100,7 @@ static bool setup(AppState& state) {
     state.extensions = std::make_unique<skgpu::VulkanExtensions>();
 
     vkb::InstanceBuilder builder;
+    builder.set_headless(true);
     builder.set_app_name("sloppy_ui")
            .require_api_version(kApiVersion);
     builder.enable_extension(VK_KHR_SURFACE_EXTENSION_NAME);
@@ -217,6 +218,9 @@ static bool setup(AppState& state) {
 
     vkb::PhysicalDeviceSelector physSelWithSurface(vkbInstance.value());
     physSelWithSurface.set_surface(state.surface);
+#if SLOPPY_UI_DIRECT_TO_DISPLAY
+    physSelWithSurface.require_present(true);
+#endif
     auto vkbPhysicalDevice = physSelWithSurface.select();
     if (!vkbPhysicalDevice) {
         fprintf(stderr, "Failed to select physical device: %s\n", vkbPhysicalDevice.error().message().c_str());
