@@ -46,14 +46,8 @@ FetchContent_Declare(fetch_vk_bootstrap
 )
 FetchContent_MakeAvailable(fetch_vk_bootstrap)
 
-find_package(Freetype REQUIRED)
 find_package(Boost REQUIRED COMPONENTS json)
-find_package(ZLIB REQUIRED)
-find_package(PNG REQUIRED)
-find_package(JPEG REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(WEBP REQUIRED libwebp libwebpdemux)
 if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)
@@ -123,7 +117,6 @@ target_include_directories(sloppy_ui PRIVATE
 
 target_include_directories(sloppy_ui SYSTEM PRIVATE
   ${SKIA_INCLUDES}
-  ${WEBP_INCLUDE_DIRS}
 )
 
 if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
@@ -143,13 +136,8 @@ endforeach()
 target_link_libraries(sloppy_ui PRIVATE
   ${SKIA_LIB_PATH}
   Vulkan::Vulkan
-  Freetype::Freetype
   GPUOpen::VulkanMemoryAllocator
   Boost::json
-  ZLIB::ZLIB
-  PNG::PNG
-  JPEG::JPEG
-  ${WEBP_LIBRARIES}
   vk-bootstrap::vk-bootstrap
   ${CMAKE_DL_LIBS}
 )
