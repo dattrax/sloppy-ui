@@ -17,7 +17,7 @@ Fedora/RHEL development tools:
 1. **Skia built with Vulkan** (from Skia repo root):
    ```bash
    python3 tools/git-sync-deps   # fetch deps (e.g. VulkanMemoryAllocator)
-   bin/gn gen out/Release
+   bin/gn gen out/Release \
       --args='skia_use_vulkan=true
              skia_use_gl=false
              is_official_build=true
@@ -27,8 +27,7 @@ Fedora/RHEL development tools:
              skia_use_system_freetype2=false
              skia_use_system_libjpeg_turbo=false
              skia_use_system_zlib=false
-             skia_use_system_expat=false
-             is_component_build=true'
+             skia_use_system_expat=false'
    ninja -C out/Release skia
    ```
 

@@ -47,7 +47,6 @@ FetchContent_Declare(fetch_vk_bootstrap
 FetchContent_MakeAvailable(fetch_vk_bootstrap)
 
 find_package(Boost REQUIRED COMPONENTS json)
-find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)
@@ -137,7 +136,6 @@ endforeach()
 target_link_libraries(sloppy_ui PRIVATE
   ${SKIA_LIB_PATH}
   Vulkan::Vulkan
-  GPUOpen::VulkanMemoryAllocator
   Boost::json
   vk-bootstrap::vk-bootstrap
   ${CMAKE_DL_LIBS}
