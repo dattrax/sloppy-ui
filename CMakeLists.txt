@@ -70,7 +70,7 @@ if(NOT SLOPPY_UI_BUILD_MODE STREQUAL "DIRECT_TO_DISPLAY")
   endif()
 endif()
 
-# Include directories for Skia (public include + src for VulkanMemoryAllocatorPriv.h)
+# Include directories for Skia
 set(SKIA_INCLUDES
   ${SKIA_ROOT}
   ${SKIA_ROOT}/include
@@ -102,6 +102,7 @@ endif()
 add_executable(sloppy_ui
   sloppy_ui.cpp
   src/SkiaRenderer.cpp
+  src/VulkanGpuOpenAllocator.cpp
   src/Swapchain.cpp
   src/SwapchainImage.cpp
   src/Movie.cpp
