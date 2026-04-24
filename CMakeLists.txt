@@ -103,6 +103,7 @@ add_executable(sloppy_ui
   sloppy_ui.cpp
   src/SkiaRenderer.cpp
   src/VulkanGpuOpenAllocator.cpp
+  src/DirectInputPluginLoader.cpp
   src/Swapchain.cpp
   src/SwapchainImage.cpp
   src/Movie.cpp

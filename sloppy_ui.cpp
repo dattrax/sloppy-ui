@@ -10,6 +10,7 @@
 #include "src/Swapchain.hpp"
 #include "src/SkiaRenderer.hpp"
 #include "src/PlatformInput.hpp"
+#include "src/DirectInputPluginLoader.hpp"
 #if !SLOPPY_UI_DIRECT_TO_DISPLAY
 #include "src/InputProcessor.hpp"
 #include <GLFW/glfw3.h>
@@ -49,6 +50,8 @@ struct AppState {
     SkiaRenderer skiaRenderer;
 #if !SLOPPY_UI_DIRECT_TO_DISPLAY
     std::unique_ptr<InputProcessor> inputProcessor;
+#else
+    DirectInputPluginLoader directInput;
 #endif
     uint32_t presentQueueIndex = 0;
     int width = kWindowWidth;
@@ -70,6 +73,8 @@ static bool createDirectDisplaySurface(VkInstance instance, VkPhysicalDevice phy
 static void shutdown(AppState& state) {
 #if !SLOPPY_UI_DIRECT_TO_DISPLAY
     state.inputProcessor.reset();
+#else
+    state.directInput.shutdown();
 #endif
     state.swapchain.destroy();
     state.skiaRenderer.destroy();
@@ -322,6 +327,12 @@ static bool setup(AppState& state) {
     state.inputProcessor = std::make_unique<InputProcessor>(&state.skiaRenderer);
     state.inputProcessor->setWindow(state.window);
     glfwSetKeyCallback(state.window, InputProcessor::keyCallback);
+#else
+    if (!state.directInput.init()) {
+        fprintf(stderr, "Failed to initialize direct input plugin: %s\n",
+                state.directInput.error().c_str());
+        return false;
+    }
 #endif
 
     return true;
@@ -334,6 +345,21 @@ static int runRenderLoop(AppState& state) {
 
     while (true) {
         std::this_thread::sleep_for(std::chrono::duration<double>(kIdleFrameWait));
+
+        if (state.skiaRenderer.isScrolling()) {
+            state.skiaRenderer.clearInputQueue();
+        }
+        SloppyInputEvent inputEvent = {};
+        while (state.directInput.pollEvent(&inputEvent)) {
+            state.skiaRenderer.enqueueInputEvent(inputEvent.key, inputEvent.pressed != 0);
+        }
+        std::pair<int, bool> queuedEvent;
+        while (state.skiaRenderer.pollInputEvent(queuedEvent)) {
+            state.skiaRenderer.processInputEvent(queuedEvent.first, queuedEvent.second);
+            if (queuedEvent.first == platform::kKeyEscape && queuedEvent.second) {
+                return 0;
+            }
+        }
 
         if (!state.swapchain.acquire(&currentImageIndex, &acquireResult)) {
             if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR) {
