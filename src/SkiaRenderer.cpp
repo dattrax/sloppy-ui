@@ -920,12 +920,14 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
         canvas->drawColor(SK_ColorDKGRAY);
     }
 
-    const float panelLeft = static_cast<float>(width) * (1.0f - kDetailPanelFraction);
-    const float featherW = static_cast<float>(width) * kDetailFeatherFraction;
+    // Snap transition edges to device pixels to avoid a visible seam line.
+    const float panelLeft = std::round(static_cast<float>(width) * (1.0f - kDetailPanelFraction));
+    const float featherW = std::round(static_cast<float>(width) * kDetailFeatherFraction);
     const float featherLeft = panelLeft - featherW;
     const SkColor panelColor = SkColorSetA(SK_ColorBLACK, 200);
 
-    SkPoint gradPts[2] = { {featherLeft, 0.0f}, {panelLeft, 0.0f} };
+    // Single-pass feather+panel fill: clamp keeps everything right of panelLeft solid.
+    SkPoint gradPts[2] = {{featherLeft, 0.0f}, {panelLeft, 0.0f}};
     SkColor4f gradColorStops[2] = {
         SkColor4f::FromColor(SK_ColorTRANSPARENT),
         SkColor4f::FromColor(panelColor),
@@ -933,17 +935,11 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
     SkGradient::Colors gradColors(SkSpan<const SkColor4f>(gradColorStops, 2), SkTileMode::kClamp);
     SkGradient gradSpec(gradColors, SkGradient::Interpolation{});
     sk_sp<SkShader> gradShader = SkShaders::LinearGradient(gradPts, gradSpec, nullptr);
-
     SkPaint featherPaint;
     featherPaint.setShader(gradShader);
-    featherPaint.setAntiAlias(true);
-    canvas->drawRect(SkRect::MakeLTRB(featherLeft, 0.0f, panelLeft, static_cast<float>(height)), featherPaint);
-
-    SkPaint solidPanelPaint;
-    solidPanelPaint.setColor(panelColor);
-    solidPanelPaint.setAntiAlias(true);
-    canvas->drawRect(SkRect::MakeLTRB(panelLeft, 0.0f, static_cast<float>(width), static_cast<float>(height)),
-        solidPanelPaint);
+    featherPaint.setAntiAlias(false);
+    canvas->drawRect(SkRect::MakeLTRB(featherLeft, 0.0f, static_cast<float>(width), static_cast<float>(height)),
+        featherPaint);
 
     const float panelPad = kDetailPanelPadding * s;
     const float innerLeft = panelLeft + panelPad;
