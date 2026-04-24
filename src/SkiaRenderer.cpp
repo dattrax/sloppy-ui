@@ -23,6 +23,7 @@
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
 #include "include/effects/SkGradient.h"
+#include "include/effects/SkImageFilters.h"
 #include "include/gpu/ganesh/vk/GrVkDirectContext.h"
 #include "include/gpu/ganesh/GrBackendSemaphore.h"
 #include "include/gpu/ganesh/vk/GrVkBackendSemaphore.h"
@@ -448,6 +449,72 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             fScrollProgress = scrollTime / kScrollDuration;
         }
     }
+    if (fBackgroundIndex < 0 || fBackgroundIndex >= static_cast<int>(fMovies.size())) {
+        fBackgroundIndex = std::max(0, std::min(fFocusIndex, static_cast<int>(fMovies.size()) - 1));
+    }
+    if (fBackgroundFading) {
+        float fadeTime = time - fBackgroundFadeStartTime;
+        if (fadeTime >= kBackgroundFadeDuration) {
+            fBackgroundFadeProgress = 1.0f;
+            fBackgroundFading = false;
+            fBackgroundPrevIndex = -1;
+        } else {
+            fBackgroundFadeProgress = fadeTime / kBackgroundFadeDuration;
+        }
+    }
+    canvas->clear(SK_ColorBLACK);
+    auto drawBackgroundPoster = [&](int index, float alpha) {
+        if (index < 0 || index >= static_cast<int>(fMovies.size()) || alpha <= 0.0f) {
+            return;
+        }
+        sk_sp<SkImage> bg = posterForIndex(index);
+        if (!bg) {
+            return;
+        }
+        const float imgW = static_cast<float>(bg->width());
+        const float imgH = static_cast<float>(bg->height());
+        if (imgW <= 0.0f || imgH <= 0.0f) {
+            return;
+        }
+        const float scale = std::max(static_cast<float>(width) / imgW, static_cast<float>(height) / imgH);
+        const float dstW = imgW * scale;
+        const float dstH = imgH * scale;
+        const float dstX = (static_cast<float>(width) - dstW) * 0.5f;
+        const float dstY = (static_cast<float>(height) - dstH) * 0.5f;
+        SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
+        SkPaint bgPaint;
+        bgPaint.setAntiAlias(true);
+        bgPaint.setAlphaf(std::max(0.0f, std::min(1.0f, alpha)));
+        canvas->drawImageRect(bg, dstRect, SkSamplingOptions(), &bgPaint);
+    };
+    const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
+    SkPaint backgroundBlurPaint;
+    backgroundBlurPaint.setImageFilter(
+        SkImageFilters::Blur(kBackgroundBlurSigma, kBackgroundBlurSigma, nullptr));
+    canvas->saveLayer(backgroundRect, &backgroundBlurPaint);
+    if (fBackgroundFading) {
+        float fadeT = easeInOut(fBackgroundFadeProgress);
+        drawBackgroundPoster(fBackgroundPrevIndex, 1.0f - fadeT);
+        drawBackgroundPoster(fBackgroundIndex, fadeT);
+    } else {
+        drawBackgroundPoster(fBackgroundIndex, 1.0f);
+    }
+    canvas->restore();
+    // Multiply blend gives a predictable dim regardless of surface alpha handling.
+    const float dimFactor = 1.0f - (static_cast<float>(kBackgroundDimAlpha) / 255.0f);
+    const uint8_t mul = static_cast<uint8_t>(
+        std::round(std::max(0.0f, std::min(1.0f, dimFactor)) * 255.0f));
+    SkPaint backgroundDimPaint;
+    backgroundDimPaint.setBlendMode(SkBlendMode::kMultiply);
+    backgroundDimPaint.setColor(SkColorSetRGB(mul, mul, mul));
+    canvas->drawRect(SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height)),
+        backgroundDimPaint);
+
+    const float pad = kPadding * uiScale;
+    const float titleSpace = kTitleSpace * uiScale;
+    const float cornerR = kCornerRadius * uiScale;
+    const float selOffset = kSelectionOffset * uiScale;
+    const float cellH = (height - pad * (kGridRows + 1) - titleSpace * kGridRows) / kGridRows;
 
     float scrollY = 0.0f;
     if (fIsScrolling) {
@@ -455,15 +522,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         scrollY = t * (height / kGridRows) * (fScrollingDown ? 1.0f : -1.0f);
     }
 
-    canvas->clear(SK_ColorGRAY);
-
-    const float pad = kPadding * uiScale;
-    const float titleSpace = kTitleSpace * uiScale;
-    const float cornerR = kCornerRadius * uiScale;
-    const float selOffset = kSelectionOffset * uiScale;
-
     const float cellW = (width - pad * (kGridCols + 1)) / kGridCols;
-    const float cellH = (height - pad * (kGridRows + 1) - titleSpace * kGridRows) / kGridRows;
 
     if (cellW != fCachedCellW || uiScale != fCachedUiScale) {
         rebuildTitleCache(cellW);
@@ -471,7 +530,6 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     }
 
     const int focusRow = fFocusIndex / kGridCols;
-
     for (int row = 0; row < kGridRows; ++row) {
         bool rowHasHighlight = (fScrollOffset + row) == focusRow;
 
@@ -648,6 +706,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
         return;
     }
 
+    int previousFocus = fFocusIndex;
     int focusRow = fFocusIndex / kGridCols;
     int focusCol = fFocusIndex % kGridCols;
     bool changed = false;
@@ -704,7 +763,22 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     if (changed) {
         fFocusIndex = std::max(0, std::min(fFocusIndex, maxIndex));
         fIsTextScrolling = true;
-        fScrollingTextStartTime = static_cast<float>(platform::nowSeconds());
+        float now = static_cast<float>(platform::nowSeconds());
+        fScrollingTextStartTime = now;
+        if (fFocusIndex != previousFocus) {
+            if (fBackgroundIndex < 0 || fBackgroundIndex >= itemCount) {
+                fBackgroundIndex = previousFocus;
+            }
+            fBackgroundPrevIndex = fBackgroundIndex;
+            fBackgroundIndex = fFocusIndex;
+            fBackgroundFadeStartTime = now;
+            fBackgroundFadeProgress = 0.0f;
+            fBackgroundFading = (fBackgroundPrevIndex != fBackgroundIndex);
+            if (!fBackgroundFading) {
+                fBackgroundPrevIndex = -1;
+                fBackgroundFadeProgress = 1.0f;
+            }
+        }
     }
 
     if (fIsScrolling) {

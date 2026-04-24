@@ -133,10 +133,13 @@ private:
     static constexpr float kDesignHeight = 720.0f;
     static constexpr int kGridCols = 4;
     static constexpr int kGridRows = 3;
-    static constexpr float kScrollDuration = 0.25f;
+    static constexpr float kScrollDuration = 0.42f;
     static constexpr float kTitleFontSize = 28.0f;
     static constexpr float kTitleSpace = 32.0f;
     static constexpr float kPadding = 8.0f;
+    static constexpr float kBackgroundFadeDuration = 0.50f;
+    static constexpr float kBackgroundBlurSigma = 6.0f;
+    static constexpr uint8_t kBackgroundDimAlpha = 150;
     static constexpr float kCornerRadius = 12.0f;
     static constexpr float kSelectionOffset = 0.0f;
     static constexpr float kSelectionStrokeWidth = 3.0f;
@@ -161,6 +164,11 @@ private:
     bool fIsScrolling = false;
     float fScrollStartTime = 0.0f;
     bool fScrollingDown = true;
+    int fBackgroundIndex = -1;
+    int fBackgroundPrevIndex = -1;
+    float fBackgroundFadeStartTime = 0.0f;
+    float fBackgroundFadeProgress = 1.0f;
+    bool fBackgroundFading = false;
 
     float fScrollingTextOffset = 0.0f;
     float fScrollingTextStartTime = 0.0f;
