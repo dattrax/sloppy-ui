@@ -1,6 +1,5 @@
 #include "SkiaRenderer.hpp"
 #include "PlatformInput.hpp"
-#include "VulkanGpuOpenAllocator.hpp"
 #include "include/codec/SkCodec.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColor.h"
@@ -31,6 +30,7 @@
 #include "include/gpu/vk/VulkanMutableTextureState.h"
 #include "include/gpu/ganesh/GrTypes.h"
 #include "src/gpu/GpuTypesPriv.h"
+#include "src/gpu/vk/vulkanmemoryallocator/VulkanMemoryAllocatorPriv.h"
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
@@ -307,16 +307,8 @@ sk_sp<SkImage> SkiaRenderer::posterForIndex(int movieIndex) const {
 }
 
 bool SkiaRenderer::create(const CreateInfo& info) {
-    if (!info.backendContext->fMemoryAllocator) {
-        sk_sp<skgpu::VulkanMemoryAllocator> allocator =
-            makeGpuOpenVulkanMemoryAllocator(*info.backendContext);
-        if (!allocator) {
-            fprintf(stderr, "Failed to create GPUOpen Vulkan memory allocator.\n");
-            destroy();
-            return false;
-        }
-        info.backendContext->fMemoryAllocator = std::move(allocator);
-    }
+    info.backendContext->fMemoryAllocator =
+        skgpu::VulkanMemoryAllocators::Make(*info.backendContext, skgpu::ThreadSafe::kNo);
 
     fContext = GrDirectContexts::MakeVulkan(*info.backendContext);
     if (!fContext) {

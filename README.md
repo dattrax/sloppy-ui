@@ -21,7 +21,6 @@ Fedora/RHEL development tools:
       --args='skia_use_vulkan=true
              skia_use_gl=false
              is_official_build=true
-             skia_vulkan_memory_allocator_dir="/usr/include"
              skia_use_libwebp_decode=false
              skia_use_libwebp_encode=false
              skia_use_system_libpng=false
@@ -32,8 +31,6 @@ Fedora/RHEL development tools:
              is_component_build=true'
    ninja -C out/Release skia
    ```
-   If VulkanMemoryAllocator is installed in a non-standard location, set
-   `skia_vulkan_memory_allocator_dir` to that include root instead.
 
 2. **Vulkan SDK / dev packages**
    ```bash
