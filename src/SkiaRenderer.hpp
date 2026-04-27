@@ -67,6 +67,7 @@ public:
     bool pollInputEvent(std::pair<int, bool>& event);
     void clearInputQueue();
     void processInputEvent(int key, bool pressed);
+    void setShowFps(bool show) { fShowFps = show; }
 
     bool isScrolling() const { return fIsScrolling; }
     int focusIndex() const { return fFocusIndex; }
@@ -114,6 +115,7 @@ private:
     SkFont fDetailBodyFont;
     SkFont fDetailMetaFont;
     SkPaint fDetailTextPaint;
+    SkPaint fFpsPaint;
     SkColorMatrix fMatrix;
 
     std::mutex fDecodeMutex;
@@ -184,6 +186,9 @@ private:
     float fScrollingTextOffset = 0.0f;
     float fScrollingTextStartTime = 0.0f;
     bool fIsTextScrolling = false;
+    bool fShowFps = false;
+    float fLastFrameTime = -1.0f;
+    float fSmoothedFps = 0.0f;
 
     std::queue<std::pair<int, bool>> fInputQueue;
     std::mutex fInputMutex;
@@ -195,6 +200,7 @@ private:
     float easeInOut(float t) const;
     static std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
     void drawDetailView(SkCanvas* canvas, int width, int height);
+    void drawFpsOverlay(SkCanvas* canvas, float uiScale);
     void drawScrollingText(SkCanvas* canvas, const std::string& text, float x, float y, float maxWidth,
                            SkPaint& paint, float time, float uiScale);
     static std::vector<std::string> wrapTextToLines(const std::string& text, float maxWidth, SkFont& font);

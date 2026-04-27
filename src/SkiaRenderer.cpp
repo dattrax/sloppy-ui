@@ -55,6 +55,21 @@ SkSamplingOptions backgroundSampling() {
 SkSamplingOptions detailSampling() {
     return SkSamplingOptions(SkCubicResampler::CatmullRom());
 }
+
+void updateSmoothedFps(float time, float& lastFrameTime, float& smoothedFps) {
+    if (lastFrameTime >= 0.0f) {
+        const float dt = time - lastFrameTime;
+        if (dt > 0.0001f) {
+            const float instantFps = 1.0f / dt;
+            if (smoothedFps <= 0.0f) {
+                smoothedFps = instantFps;
+            } else {
+                smoothedFps = smoothedFps * 0.9f + instantFps * 0.1f;
+            }
+        }
+    }
+    lastFrameTime = time;
+}
 }
 
 bool SkiaRenderer::makeLoadingPlaceholder() {
@@ -531,6 +546,8 @@ bool SkiaRenderer::create(const CreateInfo& info) {
 
     fDetailTextPaint.setAntiAlias(true);
     fDetailTextPaint.setColor(SK_ColorWHITE);
+    fFpsPaint.setAntiAlias(true);
+    fFpsPaint.setColor(SK_ColorWHITE);
 
     return true;
 }
@@ -554,6 +571,8 @@ void SkiaRenderer::destroy() {
     fLayoutHeight = 0;
     fTileTargetWidth = 0;
     fTileTargetHeight = 0;
+    fLastFrameTime = -1.0f;
+    fSmoothedFps = 0.0f;
     fPosterSlots.clear();
     fPosterPlaceholder.reset();
     fContext.reset();
@@ -594,12 +613,14 @@ float SkiaRenderer::layoutScale(int width, int height) {
 }
 
 void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
+    updateSmoothedFps(time, fLastFrameTime, fSmoothedFps);
     updateTileTargetSize(width, height);
     double now = platform::nowSeconds();
     updatePosterCache(now);
 
     if (fDetailMode) {
         drawDetailView(canvas, width, height);
+        drawFpsOverlay(canvas, layoutScale(width, height));
         return;
     }
 
@@ -752,6 +773,32 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             }
         }
     }
+    drawFpsOverlay(canvas, uiScale);
+}
+
+void SkiaRenderer::drawFpsOverlay(SkCanvas* canvas, float uiScale) {
+    if (!fShowFps || fSmoothedFps <= 0.0f) {
+        return;
+    }
+    const float fontSize = std::max(14.0f, 20.0f * uiScale);
+    SkFont fpsFont(fTypeface, fontSize);
+    fpsFont.setEdging(SkFont::Edging::kAntiAlias);
+    fpsFont.setSubpixel(false);
+
+    char fpsText[64];
+    std::snprintf(fpsText, sizeof(fpsText), "FPS: %.1f", fSmoothedFps);
+    sk_sp<SkTextBlob> blob = SkTextBlob::MakeFromText(
+        fpsText, std::strlen(fpsText), fpsFont, SkTextEncoding::kUTF8);
+    if (!blob) {
+        return;
+    }
+
+    SkFontMetrics fm;
+    fpsFont.getMetrics(&fm);
+    const float x = std::max(8.0f, 12.0f * uiScale);
+    const float y = std::max(8.0f, 12.0f * uiScale) - fm.fAscent;
+
+    canvas->drawTextBlob(blob, x, y, fFpsPaint);
 }
 
 bool SkiaRenderer::flushAndSubmit(SkSurface* surface, VkSemaphore signalSemaphore, uint32_t presentQueueIndex) {

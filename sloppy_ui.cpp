@@ -25,6 +25,7 @@
 #include <memory>
 #include <thread>
 #include <vector>
+#include <string_view>
 #include <vulkan/vulkan.h>
 
 static constexpr uint32_t kApiVersion = VK_API_VERSION_1_1;
@@ -36,6 +37,10 @@ static constexpr const char* kBuildMode = "DIRECT_TO_DISPLAY";
 #else
 static constexpr const char* kBuildMode = "WINDOWED";
 #endif
+
+struct AppOptions {
+    bool showFps = false;
+};
 
 struct AppState {
 #if !SLOPPY_UI_DIRECT_TO_DISPLAY
@@ -64,6 +69,7 @@ struct AppState {
 static bool setup(AppState& state);
 static int runRenderLoop(AppState& state);
 static void shutdown(AppState& state);
+static bool parseArgs(int argc, char** argv, AppOptions& options);
 #if SLOPPY_UI_DIRECT_TO_DISPLAY
 static const char* physicalDeviceTypeToString(VkPhysicalDeviceType type);
 static bool createDirectDisplaySurface(VkInstance instance, VkPhysicalDevice physicalDevice,
@@ -429,6 +435,24 @@ static int runRenderLoop(AppState& state) {
 #endif
 }
 
+static bool parseArgs(int argc, char** argv, AppOptions& options) {
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg = argv[i];
+        if (arg == "--show-fps") {
+            options.showFps = true;
+            continue;
+        }
+        if (arg == "--help" || arg == "-h") {
+            fprintf(stderr, "Usage: sloppy_ui [--show-fps]\n");
+            return false;
+        }
+        fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+        fprintf(stderr, "Usage: sloppy_ui [--show-fps]\n");
+        return false;
+    }
+    return true;
+}
+
 #if SLOPPY_UI_DIRECT_TO_DISPLAY
 static const char* physicalDeviceTypeToString(VkPhysicalDeviceType type) {
     switch (type) {
@@ -571,12 +595,17 @@ static bool createDirectDisplaySurface(VkInstance instance, VkPhysicalDevice phy
 }
 #endif
 
-int main(int, char**) {
+int main(int argc, char** argv) {
     fprintf(stderr, "Build mode: %s\n", kBuildMode);
+    AppOptions options;
+    if (!parseArgs(argc, argv, options)) {
+        return 1;
+    }
     AppState state;
     if (!setup(state)) {
         return 1;
     }
+    state.skiaRenderer.setShowFps(options.showFps);
     int result = runRenderLoop(state);
     shutdown(state);
 
