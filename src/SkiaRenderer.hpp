@@ -10,7 +10,9 @@
 #include "include/core/SkFont.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkImage.h"
+#include "include/core/SkImageInfo.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkSamplingOptions.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
@@ -78,7 +80,10 @@ private:
     };
 
     struct PosterSlot {
-        sk_sp<SkImage> fImage;
+        sk_sp<SkImage> fGridImage;
+        sk_sp<SkImage> fBackgroundImage;
+        sk_sp<SkImage> fDetailImage;
+        sk_sp<SkImage> fDetailRaster;
         PosterState fState = PosterState::Empty;
         double fLastUsed = 0.0;
         uint32_t fLoadGeneration = 0;
@@ -128,6 +133,10 @@ private:
     std::vector<TitleCache> fTitleCache;
     float fCachedCellW = 0.0f;
     float fCachedUiScale = -1.0f;
+    int fLayoutWidth = 0;
+    int fLayoutHeight = 0;
+    int fTileTargetWidth = 0;
+    int fTileTargetHeight = 0;
 
     static constexpr float kDesignWidth = 1280.0f;
     static constexpr float kDesignHeight = 720.0f;
@@ -156,6 +165,8 @@ private:
     static constexpr int kLoadingPlaceholderWidth = 960;
     static constexpr int kLoadingPlaceholderHeight = 540;
     static constexpr float kLoadingPlaceholderFontSize = 48.0f;
+    static constexpr float kTileOversample = 1.1f;
+    static constexpr float kBackgroundHalfScale = 0.5f;
 
     int fFocusIndex = 0;
     int fScrollOffset = 0;
@@ -211,5 +222,11 @@ private:
     void requestPosterDecode(int movieIndex);
     void updatePosterCache(double now);
     void evictPosterCache(double now, const std::vector<int>& touched);
-    sk_sp<SkImage> posterForIndex(int movieIndex) const;
+    sk_sp<SkImage> posterForGrid(int movieIndex) const;
+    sk_sp<SkImage> posterForBackground(int movieIndex) const;
+    sk_sp<SkImage> posterForDetail(int movieIndex);
+    static SkISize computeTileTargetSize(int width, int height);
+    void updateTileTargetSize(int width, int height);
+    sk_sp<SkImage> makeScaledImage(const SkImage* source, int targetWidth, int targetHeight) const;
+    sk_sp<SkImage> uploadImageToGpu(const sk_sp<SkImage>& source) const;
 };
