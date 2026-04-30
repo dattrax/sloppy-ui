@@ -24,9 +24,9 @@
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
 #include "include/effects/SkGradient.h"
-#include "include/effects/SkImageFilters.h"
 #include "include/gpu/ganesh/vk/GrVkDirectContext.h"
 #include "include/gpu/ganesh/GrBackendSemaphore.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/ganesh/vk/GrVkBackendSemaphore.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
 #include "include/gpu/vk/VulkanMutableTextureState.h"
@@ -652,7 +652,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         }
     }
     canvas->clear(SK_ColorBLACK);
-    auto drawBackgroundPoster = [&](int index, float alpha) {
+    auto drawBackgroundPoster = [&](SkCanvas* targetCanvas, int index, float alpha) {
         if (index < 0 || index >= static_cast<int>(fMovies.size()) || alpha <= 0.0f) {
             return;
         }
@@ -674,21 +674,44 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         SkPaint bgPaint;
         bgPaint.setAntiAlias(true);
         bgPaint.setAlphaf(std::max(0.0f, std::min(1.0f, alpha)));
-        canvas->drawImageRect(bg, dstRect, backgroundSampling(), &bgPaint);
+        targetCanvas->drawImageRect(bg, dstRect, backgroundSampling(), &bgPaint);
     };
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
-    SkPaint backgroundBlurPaint;
-    backgroundBlurPaint.setImageFilter(
-        SkImageFilters::Blur(kBackgroundBlurSigma, kBackgroundBlurSigma, nullptr));
-    canvas->saveLayer(backgroundRect, &backgroundBlurPaint);
-    if (fBackgroundFading) {
-        float fadeT = easeInOut(fBackgroundFadeProgress);
-        drawBackgroundPoster(fBackgroundPrevIndex, 1.0f - fadeT);
-        drawBackgroundPoster(fBackgroundIndex, fadeT);
-    } else {
-        drawBackgroundPoster(fBackgroundIndex, 1.0f);
+    sk_sp<SkImage> composedBackground;
+    if (fContext) {
+        const SkImageInfo bgInfo =
+            SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+        sk_sp<SkSurface> backgroundSurface =
+            SkSurfaces::RenderTarget(fContext.get(), skgpu::Budgeted::kNo, bgInfo);
+        if (backgroundSurface) {
+            SkCanvas* backgroundCanvas = backgroundSurface->getCanvas();
+            backgroundCanvas->clear(SK_ColorBLACK);
+            if (fBackgroundFading) {
+                float fadeT = easeInOut(fBackgroundFadeProgress);
+                drawBackgroundPoster(backgroundCanvas, fBackgroundPrevIndex, 1.0f - fadeT);
+                drawBackgroundPoster(backgroundCanvas, fBackgroundIndex, fadeT);
+            } else {
+                drawBackgroundPoster(backgroundCanvas, fBackgroundIndex, 1.0f);
+            }
+            composedBackground = backgroundSurface->makeImageSnapshot();
+        }
     }
-    canvas->restore();
+
+    if (composedBackground) {
+        sk_sp<SkImage> blurredBackground = fBackgroundBlurFilter.generate(
+            fContext.get(), kBackgroundBlurRadius, composedBackground, backgroundRect);
+        if (blurredBackground) {
+            canvas->drawImageRect(blurredBackground, backgroundRect, backgroundSampling());
+        } else {
+            canvas->drawImageRect(composedBackground, backgroundRect, backgroundSampling());
+        }
+    } else if (fBackgroundFading) {
+        float fadeT = easeInOut(fBackgroundFadeProgress);
+        drawBackgroundPoster(canvas, fBackgroundPrevIndex, 1.0f - fadeT);
+        drawBackgroundPoster(canvas, fBackgroundIndex, fadeT);
+    } else {
+        drawBackgroundPoster(canvas, fBackgroundIndex, 1.0f);
+    }
     // Multiply blend gives a predictable dim regardless of surface alpha handling.
     const float dimFactor = 1.0f - (static_cast<float>(kBackgroundDimAlpha) / 255.0f);
     const uint8_t mul = static_cast<uint8_t>(

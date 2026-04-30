@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "KawaseBlurFilter.hpp"
 #include "Movie.hpp"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
@@ -117,6 +118,7 @@ private:
     SkPaint fDetailTextPaint;
     SkPaint fFpsPaint;
     SkColorMatrix fMatrix;
+    KawaseBlurFilter fBackgroundBlurFilter;
 
     std::mutex fDecodeMutex;
     std::condition_variable fDecodeCv;
@@ -149,7 +151,7 @@ private:
     static constexpr float kTitleSpace = 32.0f;
     static constexpr float kPadding = 8.0f;
     static constexpr float kBackgroundFadeDuration = 0.50f;
-    static constexpr float kBackgroundBlurSigma = 6.0f;
+    static constexpr uint32_t kBackgroundBlurRadius = 16;
     static constexpr uint8_t kBackgroundDimAlpha = 150;
     static constexpr float kCornerRadius = 12.0f;
     static constexpr float kSelectionOffset = 0.0f;
