@@ -101,6 +101,8 @@ endif()
 add_executable(sloppy_ui
   sloppy_ui.cpp
   src/SkiaRenderer.cpp
+  src/SkiaRendererDetail.cpp
+  src/SkiaRendererPosterCache.cpp
   src/KawaseBlurFilter.cpp
   src/DirectInputPluginLoader.cpp
   src/Swapchain.cpp
