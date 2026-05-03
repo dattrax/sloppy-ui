@@ -72,6 +72,7 @@ public:
 
     bool isScrolling() const { return fIsScrolling; }
     int focusIndex() const { return fFocusIndex; }
+    bool detailMode() const { return fDetailMode; }
 
 private:
     enum class PosterState {

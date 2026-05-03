@@ -283,6 +283,7 @@ void SkiaRenderer::finishScroll() {
     const int visibleRows = kGridRows;
     const size_t itemCount = fMovies.size();
     if (itemCount == 0) {
+        clearInputQueue();
         return;
     }
     const int totalRows =
@@ -300,6 +301,7 @@ void SkiaRenderer::finishScroll() {
     if (fScrollOffset < 0) {
         fScrollOffset = 0;
     }
+    clearInputQueue();
 }
 
 float SkiaRenderer::layoutScale(int width, int height) {
@@ -614,6 +616,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     if (fDetailMode) {
         if (key == platform::kKeyEscape) {
             fDetailMode = false;
+            clearInputQueue();
         }
         return;
     }
