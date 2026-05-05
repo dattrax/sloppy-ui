@@ -103,6 +103,7 @@ add_executable(sloppy_ui
   src/SkiaRenderer.cpp
   src/SkiaRendererDetail.cpp
   src/SkiaRendererPosterCache.cpp
+  src/BlurBackgroundMesh.cpp
   src/KawaseBlurFilter.cpp
   src/DirectInputPluginLoader.cpp
   src/Swapchain.cpp

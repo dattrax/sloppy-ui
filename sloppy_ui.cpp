@@ -40,6 +40,7 @@ static constexpr const char* kBuildMode = "WINDOWED";
 
 struct AppOptions {
     bool showFps = false;
+    bool skipGridForeground = false;
 };
 
 struct AppState {
@@ -443,12 +444,16 @@ static bool parseArgs(int argc, char** argv, AppOptions& options) {
             options.showFps = true;
             continue;
         }
+        if (arg == "--skip-grid" || arg == "--no-grid") {
+            options.skipGridForeground = true;
+            continue;
+        }
         if (arg == "--help" || arg == "-h") {
-            fprintf(stderr, "Usage: sloppy_ui [--show-fps]\n");
+            fprintf(stderr, "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid]\n");
             return false;
         }
         fprintf(stderr, "Unknown argument: %s\n", argv[i]);
-        fprintf(stderr, "Usage: sloppy_ui [--show-fps]\n");
+        fprintf(stderr, "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid]\n");
         return false;
     }
     return true;
@@ -607,6 +612,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     state.skiaRenderer.setShowFps(options.showFps);
+    state.skiaRenderer.setSkipGridForeground(options.skipGridForeground);
     int result = runRenderLoop(state);
     shutdown(state);
 

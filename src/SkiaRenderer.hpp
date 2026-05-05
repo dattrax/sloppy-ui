@@ -69,6 +69,7 @@ public:
     void clearInputQueue();
     void processInputEvent(int key, bool pressed);
     void setShowFps(bool show) { fShowFps = show; }
+    void setSkipGridForeground(bool skip) { fSkipGridForeground = skip; }
 
     bool isScrolling() const { return fIsScrolling; }
     int focusIndex() const { return fFocusIndex; }
@@ -164,6 +165,7 @@ private:
     static constexpr float kBackgroundFadeDuration = 0.50f;
     static constexpr uint32_t kBackgroundBlurRadius = 16;
     static constexpr uint8_t kBackgroundDimAlpha = 150;
+    static constexpr float kBlurHoleInset = 1.5f;
     static constexpr float kCornerRadius = 12.0f;
     static constexpr float kSelectionOffset = 0.0f;
     static constexpr float kSelectionStrokeWidth = 3.0f;
@@ -202,6 +204,7 @@ private:
     bool fShowFps = false;
     float fLastFrameTime = -1.0f;
     float fSmoothedFps = 0.0f;
+    bool fSkipGridForeground = false;
 
     std::queue<std::pair<int, bool>> fInputQueue;
     std::mutex fInputMutex;

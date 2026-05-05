@@ -1,4 +1,5 @@
 #include "SkiaRenderer.hpp"
+#include "BlurBackgroundMesh.hpp"
 #include "PlatformInput.hpp"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColor.h"
@@ -18,6 +19,7 @@
 #include "include/core/SkRRect.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
+#include "include/core/SkBlendMode.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
@@ -38,8 +40,10 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <utility>
 
 namespace {
+
 SkSamplingOptions gridSampling() {
     return SkSamplingOptions(SkCubicResampler::Mitchell());
 }
@@ -352,6 +356,22 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         }
     }
     canvas->clear(SK_ColorBLACK);
+
+    const float pad = kPadding * uiScale;
+    const float titleSpace = kTitleSpace * uiScale;
+    const float cellH = (height - pad * (kGridRows + 1) - titleSpace * kGridRows) / kGridRows;
+    float scrollY = 0.0f;
+    if (fIsScrolling) {
+        float t = easeInOut(fScrollProgress);
+        scrollY = t * (height / kGridRows) * (fScrollingDown ? 1.0f : -1.0f);
+    }
+    const float cellW = (width - pad * (kGridCols + 1)) / kGridCols;
+
+    if (cellW != fCachedCellW || uiScale != fCachedUiScale) {
+        rebuildTitleCache(cellW);
+        fCachedUiScale = uiScale;
+    }
+
     auto drawBackgroundPoster = [&](SkCanvas* targetCanvas, int index, float alpha) {
         if (index < 0 || index >= static_cast<int>(fMovies.size()) || alpha <= 0.0f) {
             return;
@@ -377,32 +397,60 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         targetCanvas->drawImageRect(bg, dstRect, backgroundSampling(), &bgPaint);
     };
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
+    auto drawBlurredLayer = [&](const sk_sp<SkImage>& blur, float alpha) {
+        if (!blur || alpha <= 0.0f) {
+            return;
+        }
+        SkPaint paint;
+        paint.setAntiAlias(true);
+        paint.setAlphaf(std::max(0.0f, std::min(1.0f, alpha)));
+        const float texScaleX = static_cast<float>(blur->width()) / static_cast<float>(width);
+        const float texScaleY = static_cast<float>(blur->height()) / static_cast<float>(height);
+        BlurBackgroundMeshParams meshParams;
+        meshParams.width = width;
+        meshParams.height = height;
+        meshParams.uiScale = uiScale;
+        meshParams.scrollY = scrollY;
+        meshParams.texScaleX = texScaleX;
+        meshParams.texScaleY = texScaleY;
+        meshParams.scrollOffset = fScrollOffset;
+        meshParams.movieCount = static_cast<int>(fMovies.size());
+        meshParams.gridCols = kGridCols;
+        meshParams.gridRows = kGridRows;
+        meshParams.paddingDesign = kPadding;
+        meshParams.titleSpaceDesign = kTitleSpace;
+        meshParams.blurHoleInsetDesign = kBlurHoleInset;
+        meshParams.cornerRadiusDesign = kCornerRadius;
+        sk_sp<SkVertices> mesh = makeBlurredBackgroundMesh(
+            meshParams, [this](int movieIndex) { return posterForGrid(movieIndex); });
+        if (!mesh) {
+            canvas->drawImageRect(blur, backgroundRect, backgroundSampling(), &paint);
+            return;
+        }
+        paint.setShader(blur->makeShader(backgroundSampling()));
+        canvas->drawVertices(mesh, SkBlendMode::kSrcOver, paint);
+    };
+
     if (fBackgroundFading) {
         float fadeT = easeInOut(fBackgroundFadeProgress);
         sk_sp<SkImage> previousBlur = ensureBlurredBackgroundCached(true, fBackgroundPrevIndex, width, height);
         sk_sp<SkImage> currentBlur = ensureBlurredBackgroundCached(false, fBackgroundIndex, width, height);
 
         if (previousBlur) {
-            SkPaint prevPaint;
-            prevPaint.setAntiAlias(true);
-            prevPaint.setAlphaf(std::max(0.0f, std::min(1.0f, 1.0f - fadeT)));
-            canvas->drawImageRect(previousBlur, backgroundRect, backgroundSampling(), &prevPaint);
+            drawBlurredLayer(previousBlur, 1.0f - fadeT);
         } else {
             drawBackgroundPoster(canvas, fBackgroundPrevIndex, 1.0f - fadeT);
         }
 
         if (currentBlur) {
-            SkPaint curPaint;
-            curPaint.setAntiAlias(true);
-            curPaint.setAlphaf(std::max(0.0f, std::min(1.0f, fadeT)));
-            canvas->drawImageRect(currentBlur, backgroundRect, backgroundSampling(), &curPaint);
+            drawBlurredLayer(currentBlur, fadeT);
         } else {
             drawBackgroundPoster(canvas, fBackgroundIndex, fadeT);
         }
     } else {
         sk_sp<SkImage> currentBlur = ensureBlurredBackgroundCached(false, fBackgroundIndex, width, height);
         if (currentBlur) {
-            canvas->drawImageRect(currentBlur, backgroundRect, backgroundSampling());
+            drawBlurredLayer(currentBlur, 1.0f);
         } else {
             drawBackgroundPoster(canvas, fBackgroundIndex, 1.0f);
         }
@@ -421,24 +469,13 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     canvas->drawRect(SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height)),
         backgroundDimPaint);
 
-    const float pad = kPadding * uiScale;
-    const float titleSpace = kTitleSpace * uiScale;
+    if (fSkipGridForeground) {
+        drawFpsOverlay(canvas, uiScale);
+        return;
+    }
+
     const float cornerR = kCornerRadius * uiScale;
     const float selOffset = kSelectionOffset * uiScale;
-    const float cellH = (height - pad * (kGridRows + 1) - titleSpace * kGridRows) / kGridRows;
-
-    float scrollY = 0.0f;
-    if (fIsScrolling) {
-        float t = easeInOut(fScrollProgress);
-        scrollY = t * (height / kGridRows) * (fScrollingDown ? 1.0f : -1.0f);
-    }
-
-    const float cellW = (width - pad * (kGridCols + 1)) / kGridCols;
-
-    if (cellW != fCachedCellW || uiScale != fCachedUiScale) {
-        rebuildTitleCache(cellW);
-        fCachedUiScale = uiScale;
-    }
 
     const int focusRow = fFocusIndex / kGridCols;
     for (int row = 0; row < kGridRows; ++row) {
