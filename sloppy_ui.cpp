@@ -41,6 +41,7 @@ static constexpr const char* kBuildMode = "WINDOWED";
 struct AppOptions {
     bool showFps = false;
     bool skipGridForeground = false;
+    bool blurredBackgroundFullRect = false;
 };
 
 struct AppState {
@@ -448,12 +449,20 @@ static bool parseArgs(int argc, char** argv, AppOptions& options) {
             options.skipGridForeground = true;
             continue;
         }
+        if (arg == "--blur-full-image" || arg == "--no-blur-mesh") {
+            options.blurredBackgroundFullRect = true;
+            continue;
+        }
         if (arg == "--help" || arg == "-h") {
-            fprintf(stderr, "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid]\n");
+            fprintf(stderr,
+                    "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid] "
+                    "[--blur-full-image|--no-blur-mesh]\n");
             return false;
         }
         fprintf(stderr, "Unknown argument: %s\n", argv[i]);
-        fprintf(stderr, "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid]\n");
+        fprintf(stderr,
+                "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid] "
+                "[--blur-full-image|--no-blur-mesh]\n");
         return false;
     }
     return true;
@@ -613,6 +622,7 @@ int main(int argc, char** argv) {
     }
     state.skiaRenderer.setShowFps(options.showFps);
     state.skiaRenderer.setSkipGridForeground(options.skipGridForeground);
+    state.skiaRenderer.setBlurredBackgroundFullRect(options.blurredBackgroundFullRect);
     int result = runRenderLoop(state);
     shutdown(state);
 

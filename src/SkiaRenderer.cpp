@@ -409,6 +409,10 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         SkColorMatrix dimMatrix;
         dimMatrix.setScale(dimFactor, dimFactor, dimFactor, 1.0f);
         paint.setColorFilter(SkColorFilters::Matrix(dimMatrix));
+        if (fBlurredBackgroundFullRect) {
+            canvas->drawImageRect(blur, backgroundRect, backgroundSampling(), &paint);
+            return;
+        }
         const float texScaleX = static_cast<float>(blur->width()) / static_cast<float>(width);
         const float texScaleY = static_cast<float>(blur->height()) / static_cast<float>(height);
         BlurBackgroundMeshParams meshParams;

@@ -70,6 +70,7 @@ public:
     void processInputEvent(int key, bool pressed);
     void setShowFps(bool show) { fShowFps = show; }
     void setSkipGridForeground(bool skip) { fSkipGridForeground = skip; }
+    void setBlurredBackgroundFullRect(bool fullRect) { fBlurredBackgroundFullRect = fullRect; }
 
     bool isScrolling() const { return fIsScrolling; }
     int focusIndex() const { return fFocusIndex; }
@@ -205,6 +206,7 @@ private:
     float fLastFrameTime = -1.0f;
     float fSmoothedFps = 0.0f;
     bool fSkipGridForeground = false;
+    bool fBlurredBackgroundFullRect = false;
 
     std::queue<std::pair<int, bool>> fInputQueue;
     std::mutex fInputMutex;
