@@ -397,6 +397,8 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         targetCanvas->drawImageRect(bg, dstRect, backgroundSampling(), &bgPaint);
     };
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
+    const float dimFactor = std::max(0.0f,
+        std::min(1.0f, 1.0f - (static_cast<float>(kBackgroundDimAlpha) / 255.0f)));
     auto drawBlurredLayer = [&](const sk_sp<SkImage>& blur, float alpha) {
         if (!blur || alpha <= 0.0f) {
             return;
@@ -404,6 +406,9 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         SkPaint paint;
         paint.setAntiAlias(true);
         paint.setAlphaf(std::max(0.0f, std::min(1.0f, alpha)));
+        SkColorMatrix dimMatrix;
+        dimMatrix.setScale(dimFactor, dimFactor, dimFactor, 1.0f);
+        paint.setColorFilter(SkColorFilters::Matrix(dimMatrix));
         const float texScaleX = static_cast<float>(blur->width()) / static_cast<float>(width);
         const float texScaleY = static_cast<float>(blur->height()) / static_cast<float>(height);
         BlurBackgroundMeshParams meshParams;
@@ -459,16 +464,6 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             fBackgroundPrevIndex = -1;
         }
     }
-    // Multiply blend gives a predictable dim regardless of surface alpha handling.
-    const float dimFactor = 1.0f - (static_cast<float>(kBackgroundDimAlpha) / 255.0f);
-    const uint8_t mul = static_cast<uint8_t>(
-        std::round(std::max(0.0f, std::min(1.0f, dimFactor)) * 255.0f));
-    SkPaint backgroundDimPaint;
-    backgroundDimPaint.setBlendMode(SkBlendMode::kMultiply);
-    backgroundDimPaint.setColor(SkColorSetRGB(mul, mul, mul));
-    canvas->drawRect(SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height)),
-        backgroundDimPaint);
-
     if (fSkipGridForeground) {
         drawFpsOverlay(canvas, uiScale);
         return;
