@@ -36,6 +36,7 @@ public:
         GrDirectContext* context = nullptr;
         int width = 0;
         int height = 0;
+        bool preferMailboxPresent = false;
     };
 
     bool create(const CreateInfo& info);

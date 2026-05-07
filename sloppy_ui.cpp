@@ -46,6 +46,7 @@ struct AppOptions {
     bool showFps = false;
     bool skipGridForeground = false;
     bool blurredBackgroundFullRect = false;
+    bool benchmarkUncappedPresent = false;
 };
 
 struct AppState {
@@ -67,12 +68,13 @@ struct AppState {
     uint32_t presentQueueIndex = 0;
     int width = kWindowWidth;
     int height = kWindowHeight;
+    bool benchmarkUncappedPresent = false;
     skgpu::VulkanBackendContext backendContext;
     std::unique_ptr<skgpu::VulkanExtensions> extensions;
     VkPhysicalDeviceFeatures2 deviceFeatures2 = {};
 };
 
-static bool setup(AppState& state);
+static bool setup(AppState& state, const AppOptions& options);
 static int runRenderLoop(AppState& state);
 static void shutdown(AppState& state);
 static bool parseArgs(int argc, char** argv, AppOptions& options);
@@ -112,7 +114,8 @@ static void shutdown(AppState& state) {
 #endif
 }
 
-static bool setup(AppState& state) {
+static bool setup(AppState& state, const AppOptions& options) {
+    state.benchmarkUncappedPresent = options.benchmarkUncappedPresent;
 #if SLOPPY_UI_DIRECT_TO_DISPLAY
     state.extensions = std::make_unique<skgpu::VulkanExtensions>();
 
@@ -328,6 +331,7 @@ static bool setup(AppState& state) {
     swapInfo.context = state.skiaRenderer.context();
     swapInfo.width = state.width;
     swapInfo.height = state.height;
+    swapInfo.preferMailboxPresent = state.benchmarkUncappedPresent;
 
     if (!state.swapchain.create(swapInfo)) {
         return false;
@@ -420,11 +424,17 @@ static void runPaceLoop(FrameWake* wake, std::stop_token token) {
 static int runRenderLoop(AppState& state) {
 #if SLOPPY_UI_DIRECT_TO_DISPLAY
     FrameWake frameWake;
-    std::jthread paceThread([&](std::stop_token st) { runPaceLoop(&frameWake, st); });
+    std::unique_ptr<std::jthread> paceThread;
+    if (!state.benchmarkUncappedPresent) {
+        paceThread = std::make_unique<std::jthread>(
+            [&](std::stop_token st) { runPaceLoop(&frameWake, st); });
+    }
 
     auto stopPacerAndReturn = [&](int exitCode) -> int {
         frameWake.requestShutdown();
-        paceThread.request_stop();
+        if (paceThread) {
+            paceThread->request_stop();
+        }
         return exitCode;
     };
 
@@ -473,6 +483,9 @@ static int runRenderLoop(AppState& state) {
                 break;
             }
             return stopPacerAndReturn(1);
+        }
+        if (state.benchmarkUncappedPresent) {
+            frameWake.bumpWake();
         }
     }
     return stopPacerAndReturn(0);
@@ -535,16 +548,24 @@ static bool parseArgs(int argc, char** argv, AppOptions& options) {
             options.blurredBackgroundFullRect = true;
             continue;
         }
+        if (arg == "--benchmark") {
+            options.benchmarkUncappedPresent = true;
+            continue;
+        }
         if (arg == "--help" || arg == "-h") {
             fprintf(stderr,
-                    "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid] "
-                    "[--blur-full-image|--no-blur-mesh]\n");
+                    "Usage: sloppy_ui [options]\n"
+                    "  --show-fps              Show FPS overlay\n"
+                    "  --skip-grid|--no-grid   Skip grid foreground\n"
+                    "  --blur-full-image|--no-blur-mesh   Full-screen blur variant\n"
+                    "  --benchmark             Prefer MAILBOX swapchain present; direct-to-display builds\n"
+                    "                          also omit the pace thread and wake immediately after present\n");
             return false;
         }
         fprintf(stderr, "Unknown argument: %s\n", argv[i]);
         fprintf(stderr,
                 "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid] "
-                "[--blur-full-image|--no-blur-mesh]\n");
+                "[--blur-full-image|--no-blur-mesh] [--benchmark]\n");
         return false;
     }
     return true;
@@ -698,8 +719,17 @@ int main(int argc, char** argv) {
     if (!parseArgs(argc, argv, options)) {
         return 1;
     }
+    if (options.benchmarkUncappedPresent) {
+#if SLOPPY_UI_DIRECT_TO_DISPLAY
+        fprintf(stderr,
+                "Benchmark: preferring MAILBOX_KHR Vulkan present mode; pace thread disabled (bumpWake per "
+                "frame).\n");
+#else
+        fprintf(stderr, "Benchmark: preferring MAILBOX_KHR Vulkan present mode.\n");
+#endif
+    }
     AppState state;
-    if (!setup(state)) {
+    if (!setup(state, options)) {
         return 1;
     }
     state.skiaRenderer.setShowFps(options.showFps);

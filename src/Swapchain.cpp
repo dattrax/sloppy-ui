@@ -53,7 +53,42 @@ bool Swapchain::create(const CreateInfo& info) {
     extent.height = std::max(caps.minImageExtent.height,
                              std::min(caps.maxImageExtent.height, extent.height));
 
+    VkPresentModeKHR chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+    uint32_t presentModeCount = 0;
+    err = vkGetPhysicalDeviceSurfacePresentModesKHR(info.physicalDevice, info.surface,
+                                                     &presentModeCount, nullptr);
+    if (err != VK_SUCCESS) {
+        fprintf(stderr, "GetSurfacePresentModes failed: %d\n", err);
+        return false;
+    }
+    std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+    if (presentModeCount > 0) {
+        err = vkGetPhysicalDeviceSurfacePresentModesKHR(
+            info.physicalDevice, info.surface, &presentModeCount, presentModes.data());
+        if (err != VK_SUCCESS) {
+            fprintf(stderr, "GetSurfacePresentModes failed: %d\n", err);
+            return false;
+        }
+    }
+
+    auto hasPresentMode = [&](VkPresentModeKHR mode) -> bool {
+        return std::find(presentModes.begin(), presentModes.end(), mode) != presentModes.end();
+    };
+
+    if (info.preferMailboxPresent) {
+        if (hasPresentMode(VK_PRESENT_MODE_MAILBOX_KHR)) {
+            chosenPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+            fprintf(stderr, "Swapchain present mode: MAILBOX_KHR (benchmark; no tearing, lower latency)\n");
+        } else {
+            fprintf(stderr,
+                    "Swapchain: MAILBOX_KHR not supported; using FIFO_KHR (vsync)\n");
+        }
+    }
+
     uint32_t imageCount = caps.minImageCount + 1;
+    if (chosenPresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+        imageCount = std::max(imageCount, 3u);
+    }
     if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount) {
         imageCount = caps.maxImageCount;
     }
@@ -72,7 +107,7 @@ bool Swapchain::create(const CreateInfo& info) {
     swapInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    swapInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    swapInfo.presentMode = chosenPresentMode;
     swapInfo.clipped = VK_TRUE;
 
     err = vkCreateSwapchainKHR(fDevice, &swapInfo, nullptr, &fSwapchain);
