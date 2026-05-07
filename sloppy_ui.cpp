@@ -20,9 +20,13 @@
 
 #include <VkBootstrap.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 #include <string_view>
@@ -346,13 +350,91 @@ static bool setup(AppState& state) {
     return true;
 }
 
+#if SLOPPY_UI_DIRECT_TO_DISPLAY
+
+namespace {
+
+struct FrameWake {
+    std::mutex fMutex;
+    std::condition_variable fCv;
+    uint64_t fWakeCount = 1;
+    uint64_t fProcessedCount = 0;
+    std::atomic<bool> fShuttingDown{false};
+
+    // The pace thread calls this every kIdleFrameWait. Additional threads may also call bumpWake()
+    // to wake the render loop sooner (inputs, timers, etc.).
+    void bumpWake() {
+        std::unique_lock<std::mutex> lk(fMutex);
+        ++fWakeCount;
+        fCv.notify_all();
+    }
+
+    bool waitForWake() {
+        std::unique_lock<std::mutex> lk(fMutex);
+        fCv.wait(lk, [this]() {
+            return fShuttingDown.load(std::memory_order_acquire) ||
+                   fWakeCount > fProcessedCount;
+        });
+        if (fShuttingDown.load(std::memory_order_acquire)) {
+            return false;
+        }
+        fProcessedCount = fWakeCount;
+        return true;
+    }
+
+    void requestShutdown() {
+        fShuttingDown.store(true, std::memory_order_release);
+        std::scoped_lock<std::mutex> lk(fMutex);
+        fCv.notify_all();
+    }
+};
+
+static void sleepInterruptibleSeconds(double seconds, std::stop_token token) {
+    const auto duration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(seconds));
+    const auto deadline = std::chrono::steady_clock::now() + duration;
+    constexpr auto slice = std::chrono::milliseconds(2);
+    while (!token.stop_requested() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_until(
+            std::min(deadline, std::chrono::steady_clock::now() + slice));
+    }
+}
+
+static void runPaceLoop(FrameWake* wake, std::stop_token token) {
+    while (!token.stop_requested()) {
+        sleepInterruptibleSeconds(kIdleFrameWait, token);
+        if (token.stop_requested()) {
+            break;
+        }
+        if (wake->fShuttingDown.load(std::memory_order_acquire)) {
+            break;
+        }
+        wake->bumpWake();
+    }
+}
+
+}  // namespace
+
+#endif  // SLOPPY_UI_DIRECT_TO_DISPLAY
+
 static int runRenderLoop(AppState& state) {
 #if SLOPPY_UI_DIRECT_TO_DISPLAY
+    FrameWake frameWake;
+    std::jthread paceThread([&](std::stop_token st) { runPaceLoop(&frameWake, st); });
+
+    auto stopPacerAndReturn = [&](int exitCode) -> int {
+        frameWake.requestShutdown();
+        paceThread.request_stop();
+        return exitCode;
+    };
+
     uint32_t currentImageIndex = 0;
     VkResult acquireResult;
 
     while (true) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(kIdleFrameWait));
+        if (!frameWake.waitForWake()) {
+            break;
+        }
 
         if (state.skiaRenderer.isScrolling()) {
             state.skiaRenderer.clearInputQueue();
@@ -366,7 +448,7 @@ static int runRenderLoop(AppState& state) {
             const bool wasDetail = state.skiaRenderer.detailMode();
             state.skiaRenderer.processInputEvent(queuedEvent.first, queuedEvent.second);
             if (queuedEvent.first == platform::kKeyEscape && queuedEvent.second && !wasDetail) {
-                return 0;
+                return stopPacerAndReturn(0);
             }
         }
 
@@ -374,7 +456,7 @@ static int runRenderLoop(AppState& state) {
             if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR) {
                 break;
             }
-            return 1;
+            return stopPacerAndReturn(1);
         }
 
         SwapchainImage* img = state.swapchain.image(currentImageIndex);
@@ -390,10 +472,10 @@ static int runRenderLoop(AppState& state) {
             if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
                 break;
             }
-            return 1;
+            return stopPacerAndReturn(1);
         }
     }
-    return 0;
+    return stopPacerAndReturn(0);
 #else
     uint32_t currentImageIndex = 0;
     VkResult acquireResult;
