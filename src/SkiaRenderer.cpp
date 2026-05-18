@@ -165,36 +165,8 @@ void SkiaRenderer::destroy() {
     fLastFpsConsoleLogTime = -1.0f;
     fPosterSlots.clear();
     fPosterPlaceholder.reset();
-    invalidateBackgroundBlurCache();
+    fBlurBackgroundCache.invalidate();
     fContext.reset();
-}
-
-void SkiaRenderer::invalidateBackgroundBlurCache() {
-    fBlurredCurrentBackground.reset();
-    fBlurredPreviousBackground.reset();
-    fBlurredCurrentIndex = -1;
-    fBlurredPreviousIndex = -1;
-    fBlurredCurrentGeneration = 0;
-    fBlurredPreviousGeneration = 0;
-    fBlurredCurrentSourceImageId = 0;
-    fBlurredPreviousSourceImageId = 0;
-    fBlurCacheWidth = 0;
-    fBlurCacheHeight = 0;
-}
-
-void SkiaRenderer::invalidateBackgroundBlurCacheForIndex(int movieIndex) {
-    if (fBlurredCurrentIndex == movieIndex) {
-        fBlurredCurrentBackground.reset();
-        fBlurredCurrentIndex = -1;
-        fBlurredCurrentGeneration = 0;
-        fBlurredCurrentSourceImageId = 0;
-    }
-    if (fBlurredPreviousIndex == movieIndex) {
-        fBlurredPreviousBackground.reset();
-        fBlurredPreviousIndex = -1;
-        fBlurredPreviousGeneration = 0;
-        fBlurredPreviousSourceImageId = 0;
-    }
 }
 
 uint32_t SkiaRenderer::backgroundGenerationForIndex(int movieIndex) const {
@@ -202,86 +174,6 @@ uint32_t SkiaRenderer::backgroundGenerationForIndex(int movieIndex) const {
         return 0;
     }
     return fPosterSlots[movieIndex].fLoadGeneration;
-}
-
-sk_sp<SkImage> SkiaRenderer::buildBlurredBackground(const sk_sp<SkImage>& source, int width, int height) const {
-    if (!fContext || !source || width <= 0 || height <= 0) {
-        return nullptr;
-    }
-
-    const float imgW = static_cast<float>(source->width());
-    const float imgH = static_cast<float>(source->height());
-    if (imgW <= 0.0f || imgH <= 0.0f) {
-        return nullptr;
-    }
-
-    const SkImageInfo bgInfo = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
-    sk_sp<SkSurface> backgroundSurface = SkSurfaces::RenderTarget(fContext.get(), skgpu::Budgeted::kNo, bgInfo);
-    if (!backgroundSurface) {
-        return nullptr;
-    }
-
-    const float scale = std::max(static_cast<float>(width) / imgW, static_cast<float>(height) / imgH);
-    const float dstW = imgW * scale;
-    const float dstH = imgH * scale;
-    const float dstX = (static_cast<float>(width) - dstW) * 0.5f;
-    const float dstY = (static_cast<float>(height) - dstH) * 0.5f;
-    const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
-    const SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
-
-    SkCanvas* backgroundCanvas = backgroundSurface->getCanvas();
-    backgroundCanvas->clear(SK_ColorBLACK);
-    backgroundCanvas->drawImageRect(source, dstRect, backgroundSampling());
-
-    sk_sp<SkImage> composed = backgroundSurface->makeImageSnapshot();
-    if (!composed) {
-        return nullptr;
-    }
-
-    return fBackgroundBlurFilter.generate(fContext.get(), kBackgroundBlurRadius, composed, backgroundRect);
-}
-
-sk_sp<SkImage> SkiaRenderer::ensureBlurredBackgroundCached(bool previousSlot, int movieIndex,
-                                                           int width, int height) {
-    if (movieIndex < 0 || movieIndex >= static_cast<int>(fMovies.size())) {
-        if (previousSlot) {
-            fBlurredPreviousBackground.reset();
-            fBlurredPreviousIndex = -1;
-            fBlurredPreviousGeneration = 0;
-            fBlurredPreviousSourceImageId = 0;
-        } else {
-            fBlurredCurrentBackground.reset();
-            fBlurredCurrentIndex = -1;
-            fBlurredCurrentGeneration = 0;
-            fBlurredCurrentSourceImageId = 0;
-        }
-        return nullptr;
-    }
-
-    if (width != fBlurCacheWidth || height != fBlurCacheHeight) {
-        invalidateBackgroundBlurCache();
-        fBlurCacheWidth = width;
-        fBlurCacheHeight = height;
-    }
-
-    sk_sp<SkImage>& cachedImage = previousSlot ? fBlurredPreviousBackground : fBlurredCurrentBackground;
-    int& cachedIndex = previousSlot ? fBlurredPreviousIndex : fBlurredCurrentIndex;
-    uint32_t& cachedGeneration = previousSlot ? fBlurredPreviousGeneration : fBlurredCurrentGeneration;
-    uint32_t& cachedSourceImageId = previousSlot ? fBlurredPreviousSourceImageId : fBlurredCurrentSourceImageId;
-
-    const uint32_t generation = backgroundGenerationForIndex(movieIndex);
-    const sk_sp<SkImage> source = posterForBackground(movieIndex);
-    const uint32_t sourceImageId = source ? source->uniqueID() : 0;
-    if (cachedImage && cachedIndex == movieIndex && cachedGeneration == generation &&
-        cachedSourceImageId == sourceImageId) {
-        return cachedImage;
-    }
-
-    cachedImage = buildBlurredBackground(source, width, height);
-    cachedIndex = movieIndex;
-    cachedGeneration = generation;
-    cachedSourceImageId = sourceImageId;
-    return cachedImage;
 }
 
 void SkiaRenderer::finishScroll() {
@@ -426,23 +318,17 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         }
         const float texScaleX = static_cast<float>(blur->width()) / static_cast<float>(width);
         const float texScaleY = static_cast<float>(blur->height()) / static_cast<float>(height);
-        BlurBackgroundMeshParams meshParams;
-        meshParams.width = width;
-        meshParams.height = height;
-        meshParams.uiScale = uiScale;
-        meshParams.scrollY = scrollY;
-        meshParams.texScaleX = texScaleX;
-        meshParams.texScaleY = texScaleY;
-        meshParams.scrollOffset = fScrollOffset;
-        meshParams.movieCount = static_cast<int>(fMovies.size());
-        meshParams.gridCols = kGridCols;
-        meshParams.gridRows = kGridRows;
-        meshParams.paddingDesign = kPadding;
-        meshParams.titleSpaceDesign = kTitleSpace;
-        meshParams.blurHoleInsetDesign = kBlurHoleInset;
-        meshParams.cornerRadiusDesign = kCornerRadius;
-        sk_sp<SkVertices> mesh = makeBlurredBackgroundMesh(
-            meshParams, [this](int movieIndex) { return posterForGrid(movieIndex); });
+        BlurBackgroundMeshBuilder::FrameParams frameParams;
+        frameParams.width = width;
+        frameParams.height = height;
+        frameParams.uiScale = uiScale;
+        frameParams.scrollY = scrollY;
+        frameParams.texScaleX = texScaleX;
+        frameParams.texScaleY = texScaleY;
+        frameParams.scrollOffset = fScrollOffset;
+        frameParams.movieCount = static_cast<int>(fMovies.size());
+        sk_sp<SkVertices> mesh = fBlurBackgroundMesh.build(
+            frameParams, [this](int movieIndex) { return posterForGrid(movieIndex); });
         if (!mesh) {
             canvas->drawImageRect(blur, backgroundRect, backgroundSampling(), &paint);
             return;
@@ -453,8 +339,14 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
 
     if (fBackgroundFading) {
         float fadeT = easeInOut(fBackgroundFadeProgress);
-        sk_sp<SkImage> previousBlur = ensureBlurredBackgroundCached(true, fBackgroundPrevIndex, width, height);
-        sk_sp<SkImage> currentBlur = ensureBlurredBackgroundCached(false, fBackgroundIndex, width, height);
+        sk_sp<SkImage> previousBlur = fBlurBackgroundCache.ensure(
+            true, fContext.get(), fBackgroundPrevIndex, width, height,
+            posterForBackground(fBackgroundPrevIndex),
+            backgroundGenerationForIndex(fBackgroundPrevIndex));
+        sk_sp<SkImage> currentBlur = fBlurBackgroundCache.ensure(
+            false, fContext.get(), fBackgroundIndex, width, height,
+            posterForBackground(fBackgroundIndex),
+            backgroundGenerationForIndex(fBackgroundIndex));
 
         if (previousBlur) {
             drawBlurredLayer(previousBlur, 1.0f - fadeT);
@@ -468,14 +360,17 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             drawBackgroundPoster(canvas, fBackgroundIndex, fadeT);
         }
     } else {
-        sk_sp<SkImage> currentBlur = ensureBlurredBackgroundCached(false, fBackgroundIndex, width, height);
+        sk_sp<SkImage> currentBlur = fBlurBackgroundCache.ensure(
+            false, fContext.get(), fBackgroundIndex, width, height,
+            posterForBackground(fBackgroundIndex),
+            backgroundGenerationForIndex(fBackgroundIndex));
         if (currentBlur) {
             drawBlurredLayer(currentBlur, 1.0f);
         } else {
             drawBackgroundPoster(canvas, fBackgroundIndex, 1.0f);
         }
         if (fBackgroundPrevIndex >= 0) {
-            invalidateBackgroundBlurCacheForIndex(fBackgroundPrevIndex);
+            fBlurBackgroundCache.invalidateForIndex(fBackgroundPrevIndex);
             fBackgroundPrevIndex = -1;
         }
     }

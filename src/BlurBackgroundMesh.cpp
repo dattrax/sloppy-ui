@@ -54,30 +54,33 @@ void appendRectTriangles(std::vector<SkPoint>& positions, std::vector<SkPoint>& 
 
 }  // namespace
 
-sk_sp<SkVertices> makeBlurredBackgroundMesh(
-    const BlurBackgroundMeshParams& p,
-    const std::function<sk_sp<SkImage>(int movieIndex)>& posterForGrid) {
+BlurBackgroundMeshBuilder::BlurBackgroundMeshBuilder(Layout layout)
+    : fLayout(layout) {}
 
-    const float wf = static_cast<float>(p.width);
-    const float hf = static_cast<float>(p.height);
-    const float pad = p.paddingDesign * p.uiScale;
-    const float titleSpace = p.titleSpaceDesign * p.uiScale;
-    const float cellH = (static_cast<float>(p.height) - pad * static_cast<float>(p.gridRows + 1) -
-                            titleSpace * static_cast<float>(p.gridRows)) /
-                        static_cast<float>(p.gridRows);
-    const float cellW = (static_cast<float>(p.width) - pad * static_cast<float>(p.gridCols + 1)) /
-                        static_cast<float>(p.gridCols);
-    const float cornerR = p.cornerRadiusDesign * p.uiScale;
-    const float holeInset = p.blurHoleInsetDesign * p.uiScale + cornerR;
+sk_sp<SkVertices> BlurBackgroundMeshBuilder::build(
+    const FrameParams& frame,
+    const std::function<sk_sp<SkImage>(int movieIndex)>& posterForGrid) const {
+
+    const float wf = static_cast<float>(frame.width);
+    const float hf = static_cast<float>(frame.height);
+    const float pad = fLayout.paddingDesign * frame.uiScale;
+    const float titleSpace = fLayout.titleSpaceDesign * frame.uiScale;
+    const float cellH = (static_cast<float>(frame.height) - pad * static_cast<float>(fLayout.gridRows + 1) -
+                            titleSpace * static_cast<float>(fLayout.gridRows)) /
+                        static_cast<float>(fLayout.gridRows);
+    const float cellW = (static_cast<float>(frame.width) - pad * static_cast<float>(fLayout.gridCols + 1)) /
+                        static_cast<float>(fLayout.gridCols);
+    const float cornerR = fLayout.cornerRadiusDesign * frame.uiScale;
+    const float holeInset = fLayout.blurHoleInsetDesign * frame.uiScale + cornerR;
     const SkRect screenRect = SkRect::MakeWH(wf, hf);
 
     std::vector<SkRect> holes;
-    holes.reserve(static_cast<size_t>(p.gridCols * p.gridRows));
+    holes.reserve(static_cast<size_t>(fLayout.gridCols * fLayout.gridRows));
 
-    for (int row = 0; row < p.gridRows; ++row) {
-        for (int col = 0; col < p.gridCols; ++col) {
-            int idx = (p.scrollOffset + row) * p.gridCols + col;
-            if (idx >= p.movieCount) {
+    for (int row = 0; row < fLayout.gridRows; ++row) {
+        for (int col = 0; col < fLayout.gridCols; ++col) {
+            int idx = (frame.scrollOffset + row) * fLayout.gridCols + col;
+            if (idx >= frame.movieCount) {
                 continue;
             }
             sk_sp<SkImage> img = posterForGrid(idx);
@@ -86,7 +89,7 @@ sk_sp<SkVertices> makeBlurredBackgroundMesh(
             }
 
             float cellX = pad + static_cast<float>(col) * (cellW + pad);
-            float cellY = pad + static_cast<float>(row) * (cellH + pad + titleSpace) - p.scrollY;
+            float cellY = pad + static_cast<float>(row) * (cellH + pad + titleSpace) - frame.scrollY;
             float imgW = static_cast<float>(img->width());
             float imgH = static_cast<float>(img->height());
             float scale = std::min(cellW / imgW, cellH / imgH);
@@ -149,8 +152,8 @@ sk_sp<SkVertices> makeBlurredBackgroundMesh(
         }
 
         for (const auto& iv : intervals) {
-            appendRectTriangles(positions, texs, indices, iv.first, y0, iv.second, y1, p.texScaleX,
-                                p.texScaleY);
+            appendRectTriangles(positions, texs, indices, iv.first, y0, iv.second, y1, frame.texScaleX,
+                                frame.texScaleY);
         }
     }
 

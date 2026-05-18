@@ -5,7 +5,8 @@
 
 #pragma once
 
-#include "KawaseBlurFilter.hpp"
+#include "BlurBackgroundCache.hpp"
+#include "BlurBackgroundMesh.hpp"
 #include "Movie.hpp"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
@@ -121,17 +122,9 @@ private:
     SkPaint fDetailTextPaint;
     SkPaint fFpsPaint;
     SkColorMatrix fMatrix;
-    KawaseBlurFilter fBackgroundBlurFilter;
-    sk_sp<SkImage> fBlurredCurrentBackground;
-    sk_sp<SkImage> fBlurredPreviousBackground;
-    int fBlurredCurrentIndex = -1;
-    int fBlurredPreviousIndex = -1;
-    uint32_t fBlurredCurrentGeneration = 0;
-    uint32_t fBlurredPreviousGeneration = 0;
-    uint32_t fBlurredCurrentSourceImageId = 0;
-    uint32_t fBlurredPreviousSourceImageId = 0;
-    int fBlurCacheWidth = 0;
-    int fBlurCacheHeight = 0;
+    BlurBackgroundCache fBlurBackgroundCache{{kBackgroundBlurRadius}};
+    BlurBackgroundMeshBuilder fBlurBackgroundMesh{{
+        kGridCols, kGridRows, kPadding, kTitleSpace, kBlurHoleInset, kCornerRadius}};
 
     std::mutex fDecodeMutex;
     std::condition_variable fDecodeCv;
@@ -254,9 +247,5 @@ private:
     void updateTileTargetSize(int width, int height);
     sk_sp<SkImage> makeScaledImage(const SkImage* source, int targetWidth, int targetHeight) const;
     sk_sp<SkImage> uploadImageToGpu(const sk_sp<SkImage>& source) const;
-    void invalidateBackgroundBlurCache();
-    void invalidateBackgroundBlurCacheForIndex(int movieIndex);
     uint32_t backgroundGenerationForIndex(int movieIndex) const;
-    sk_sp<SkImage> buildBlurredBackground(const sk_sp<SkImage>& source, int width, int height) const;
-    sk_sp<SkImage> ensureBlurredBackgroundCached(bool previousSlot, int movieIndex, int width, int height);
 };
