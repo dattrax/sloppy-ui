@@ -203,8 +203,9 @@ private:
     float fScrollingTextStartTime = 0.0f;
     bool fIsTextScrolling = false;
     bool fShowFps = false;
-    float fLastFrameTime = -1.0f;
+    std::deque<float> fFpsFrameTimes;
     float fSmoothedFps = 0.0f;
+    float fLastFpsConsoleLogTime = -1.0f;
     bool fSkipGridForeground = false;
     bool fBlurredBackgroundFullRect = false;
 

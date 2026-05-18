@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <cstdint>
 #include <vector>
@@ -52,19 +53,21 @@ SkSamplingOptions backgroundSampling() {
     return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
 }
 
-void updateSmoothedFps(float time, float& lastFrameTime, float& smoothedFps) {
-    if (lastFrameTime >= 0.0f) {
-        const float dt = time - lastFrameTime;
-        if (dt > 0.0001f) {
-            const float instantFps = 1.0f / dt;
-            if (smoothedFps <= 0.0f) {
-                smoothedFps = instantFps;
-            } else {
-                smoothedFps = smoothedFps * 0.9f + instantFps * 0.1f;
-            }
+static constexpr float kFpsSmoothingWindowSeconds = 3.0f;
+static constexpr float kFpsConsoleLogIntervalSeconds = 1.0f;
+
+void updateSmoothedFps(float time, std::deque<float>& frameTimes, float& smoothedFps) {
+    frameTimes.push_back(time);
+    const float windowStart = time - kFpsSmoothingWindowSeconds;
+    while (!frameTimes.empty() && frameTimes.front() < windowStart) {
+        frameTimes.pop_front();
+    }
+    if (frameTimes.size() >= 2) {
+        const float span = frameTimes.back() - frameTimes.front();
+        if (span > 0.0001f) {
+            smoothedFps = static_cast<float>(frameTimes.size() - 1) / span;
         }
     }
-    lastFrameTime = time;
 }
 }
 
@@ -157,8 +160,9 @@ void SkiaRenderer::destroy() {
     fLayoutHeight = 0;
     fTileTargetWidth = 0;
     fTileTargetHeight = 0;
-    fLastFrameTime = -1.0f;
+    fFpsFrameTimes.clear();
     fSmoothedFps = 0.0f;
+    fLastFpsConsoleLogTime = -1.0f;
     fPosterSlots.clear();
     fPosterPlaceholder.reset();
     invalidateBackgroundBlurCache();
@@ -317,7 +321,14 @@ float SkiaRenderer::layoutScale(int width, int height) {
 }
 
 void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
-    updateSmoothedFps(time, fLastFrameTime, fSmoothedFps);
+    updateSmoothedFps(time, fFpsFrameTimes, fSmoothedFps);
+    if (fShowFps && fSmoothedFps > 0.0f) {
+        if (fLastFpsConsoleLogTime < 0.0f ||
+            time - fLastFpsConsoleLogTime >= kFpsConsoleLogIntervalSeconds) {
+            fprintf(stderr, "FPS: %.1f\n", fSmoothedFps);
+            fLastFpsConsoleLogTime = time;
+        }
+    }
     updateTileTargetSize(width, height);
     double now = platform::nowSeconds();
     updatePosterCache(now);
