@@ -11,6 +11,7 @@
 
 struct BlurBackgroundCacheConfig {
     uint32_t blurRadius = 16;
+    float dimRgbFactor = 1.0f;
 };
 
 class BlurBackgroundCache {
@@ -39,8 +40,10 @@ private:
     sk_sp<SkImage> buildBlurred(GrDirectContext* context,
                                 const sk_sp<SkImage>& source,
                                 int width, int height) const;
+    sk_sp<SkImage> applyDim(GrDirectContext* context, const sk_sp<SkImage>& blurred) const;
 
     uint32_t fBlurRadius;
+    float fDimRgbFactor;
     KawaseBlurFilter fBlurFilter;
     Slot fCurrent;
     Slot fPrevious;

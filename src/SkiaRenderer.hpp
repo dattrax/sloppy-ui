@@ -122,7 +122,8 @@ private:
     SkPaint fDetailTextPaint;
     SkPaint fFpsPaint;
     SkColorMatrix fMatrix;
-    BlurBackgroundCache fBlurBackgroundCache{{kBackgroundBlurRadius}};
+    BlurBackgroundCache fBlurBackgroundCache{{kBackgroundBlurRadius,
+        1.0f - (static_cast<float>(kBackgroundDimAlpha) / 255.0f)}};
     BlurBackgroundMeshBuilder fBlurBackgroundMesh{{
         kGridCols, kGridRows, kPadding, kTitleSpace, kBlurHoleInset, kCornerRadius}};
 

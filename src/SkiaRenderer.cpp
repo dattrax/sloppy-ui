@@ -46,7 +46,7 @@
 namespace {
 
 SkSamplingOptions gridSampling() {
-    return SkSamplingOptions(SkCubicResampler::Mitchell());
+    return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
 }
 
 SkSamplingOptions backgroundSampling() {
@@ -300,24 +300,34 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         targetCanvas->drawImageRect(bg, dstRect, backgroundSampling(), &bgPaint);
     };
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
-    const float dimFactor = std::max(0.0f,
-        std::min(1.0f, 1.0f - (static_cast<float>(kBackgroundDimAlpha) / 255.0f)));
-    auto drawBlurredLayer = [&](const sk_sp<SkImage>& blur, float alpha) {
-        if (!blur || alpha <= 0.0f) {
-            return;
+
+    sk_sp<SkImage> previousBlur;
+    sk_sp<SkImage> currentBlur;
+    if (fBackgroundFading) {
+        previousBlur = fBlurBackgroundCache.ensure(
+            true, fContext.get(), fBackgroundPrevIndex, width, height,
+            posterForBackground(fBackgroundPrevIndex),
+            backgroundGenerationForIndex(fBackgroundPrevIndex));
+        currentBlur = fBlurBackgroundCache.ensure(
+            false, fContext.get(), fBackgroundIndex, width, height,
+            posterForBackground(fBackgroundIndex),
+            backgroundGenerationForIndex(fBackgroundIndex));
+    } else {
+        currentBlur = fBlurBackgroundCache.ensure(
+            false, fContext.get(), fBackgroundIndex, width, height,
+            posterForBackground(fBackgroundIndex),
+            backgroundGenerationForIndex(fBackgroundIndex));
+    }
+
+    sk_sp<SkVertices> blurMesh;
+    if (!fBlurredBackgroundFullRect) {
+        const sk_sp<SkImage>& texRef = currentBlur ? currentBlur : previousBlur;
+        float texScaleX = 1.0f;
+        float texScaleY = 1.0f;
+        if (texRef) {
+            texScaleX = static_cast<float>(texRef->width()) / static_cast<float>(width);
+            texScaleY = static_cast<float>(texRef->height()) / static_cast<float>(height);
         }
-        SkPaint paint;
-        paint.setAntiAlias(true);
-        paint.setAlphaf(std::max(0.0f, std::min(1.0f, alpha)));
-        SkColorMatrix dimMatrix;
-        dimMatrix.setScale(dimFactor, dimFactor, dimFactor, 1.0f);
-        paint.setColorFilter(SkColorFilters::Matrix(dimMatrix));
-        if (fBlurredBackgroundFullRect) {
-            canvas->drawImageRect(blur, backgroundRect, backgroundSampling(), &paint);
-            return;
-        }
-        const float texScaleX = static_cast<float>(blur->width()) / static_cast<float>(width);
-        const float texScaleY = static_cast<float>(blur->height()) / static_cast<float>(height);
         BlurBackgroundMeshBuilder::FrameParams frameParams;
         frameParams.width = width;
         frameParams.height = height;
@@ -327,26 +337,32 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         frameParams.texScaleY = texScaleY;
         frameParams.scrollOffset = fScrollOffset;
         frameParams.movieCount = static_cast<int>(fMovies.size());
-        sk_sp<SkVertices> mesh = fBlurBackgroundMesh.build(
+        blurMesh = fBlurBackgroundMesh.build(
             frameParams, [this](int movieIndex) { return posterForGrid(movieIndex); });
-        if (!mesh) {
+    }
+
+    auto drawBlurredLayer = [&](const sk_sp<SkImage>& blur, float alpha) {
+        if (!blur || alpha <= 0.0f) {
+            return;
+        }
+        const bool opaque = alpha >= 0.999f;
+        SkPaint paint;
+        paint.setAntiAlias(false);
+        if (!opaque) {
+            paint.setAlphaf(std::max(0.0f, std::min(1.0f, alpha)));
+        }
+        const SkBlendMode blendMode = opaque ? SkBlendMode::kSrc : SkBlendMode::kSrcOver;
+        paint.setBlendMode(blendMode);
+        if (fBlurredBackgroundFullRect || !blurMesh) {
             canvas->drawImageRect(blur, backgroundRect, backgroundSampling(), &paint);
             return;
         }
         paint.setShader(blur->makeShader(backgroundSampling()));
-        canvas->drawVertices(mesh, SkBlendMode::kSrcOver, paint);
+        canvas->drawVertices(blurMesh, blendMode, paint);
     };
 
     if (fBackgroundFading) {
         float fadeT = easeInOut(fBackgroundFadeProgress);
-        sk_sp<SkImage> previousBlur = fBlurBackgroundCache.ensure(
-            true, fContext.get(), fBackgroundPrevIndex, width, height,
-            posterForBackground(fBackgroundPrevIndex),
-            backgroundGenerationForIndex(fBackgroundPrevIndex));
-        sk_sp<SkImage> currentBlur = fBlurBackgroundCache.ensure(
-            false, fContext.get(), fBackgroundIndex, width, height,
-            posterForBackground(fBackgroundIndex),
-            backgroundGenerationForIndex(fBackgroundIndex));
 
         if (previousBlur) {
             drawBlurredLayer(previousBlur, 1.0f - fadeT);
@@ -360,10 +376,6 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             drawBackgroundPoster(canvas, fBackgroundIndex, fadeT);
         }
     } else {
-        sk_sp<SkImage> currentBlur = fBlurBackgroundCache.ensure(
-            false, fContext.get(), fBackgroundIndex, width, height,
-            posterForBackground(fBackgroundIndex),
-            backgroundGenerationForIndex(fBackgroundIndex));
         if (currentBlur) {
             drawBlurredLayer(currentBlur, 1.0f);
         } else {
@@ -411,8 +423,12 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
             SkRRect rrect = SkRRect::MakeRectXY(dstRect, cornerR, cornerR);
 
             canvas->save();
-            canvas->clipRRect(rrect, true);
-            canvas->drawImageRect(img, dstRect, gridSampling(), rowHasHighlight ? nullptr : &fDimPaint);
+            canvas->clipRRect(rrect, false);
+            if (rowHasHighlight) {
+                canvas->drawImageRect(img, dstRect, gridSampling(), nullptr);
+            } else {
+                canvas->drawImageRect(img, dstRect, gridSampling(), &fDimPaint);
+            }
             canvas->restore();
 
             if (idx == fFocusIndex) {

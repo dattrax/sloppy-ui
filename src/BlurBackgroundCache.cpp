@@ -1,9 +1,11 @@
 #include "BlurBackgroundCache.hpp"
 
 #include "include/core/SkCanvas.h"
+#include "include/core/SkColorFilter.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSamplingOptions.h"
+#include "include/effects/SkColorMatrix.h"
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/ganesh/GrTypes.h"
 
@@ -16,7 +18,7 @@ SkSamplingOptions backgroundSampling() {
 }  // namespace
 
 BlurBackgroundCache::BlurBackgroundCache(const BlurBackgroundCacheConfig& config)
-    : fBlurRadius(config.blurRadius) {}
+    : fBlurRadius(config.blurRadius), fDimRgbFactor(config.dimRgbFactor) {}
 
 BlurBackgroundCache::Slot& BlurBackgroundCache::slot(bool previousSlot) {
     return previousSlot ? fPrevious : fCurrent;
@@ -85,7 +87,28 @@ sk_sp<SkImage> BlurBackgroundCache::buildBlurred(GrDirectContext* context,
         return nullptr;
     }
 
-    return fBlurFilter.generate(context, fBlurRadius, composed, backgroundRect);
+    return applyDim(context, fBlurFilter.generate(context, fBlurRadius, composed, backgroundRect));
+}
+
+sk_sp<SkImage> BlurBackgroundCache::applyDim(GrDirectContext* context,
+                                             const sk_sp<SkImage>& blurred) const {
+    if (!blurred || fDimRgbFactor >= 0.999f) {
+        return blurred;
+    }
+
+    const SkImageInfo info = blurred->imageInfo();
+    sk_sp<SkSurface> dimSurface = SkSurfaces::RenderTarget(context, skgpu::Budgeted::kNo, info);
+    if (!dimSurface) {
+        return blurred;
+    }
+
+    SkPaint dimPaint;
+    dimPaint.setAntiAlias(false);
+    SkColorMatrix dimMatrix;
+    dimMatrix.setScale(fDimRgbFactor, fDimRgbFactor, fDimRgbFactor, 1.0f);
+    dimPaint.setColorFilter(SkColorFilters::Matrix(dimMatrix));
+    dimSurface->getCanvas()->drawImage(blurred, 0.0f, 0.0f, SkSamplingOptions(), &dimPaint);
+    return dimSurface->makeImageSnapshot();
 }
 
 sk_sp<SkImage> BlurBackgroundCache::ensure(bool previousSlot, GrDirectContext* context,
