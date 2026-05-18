@@ -36,6 +36,7 @@ public:
         GrDirectContext* context = nullptr;
         int width = 0;
         int height = 0;
+        uint32_t imageCount = 3;
         bool preferMailboxPresent = false;
     };
 

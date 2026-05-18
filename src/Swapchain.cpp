@@ -85,9 +85,9 @@ bool Swapchain::create(const CreateInfo& info) {
         }
     }
 
-    uint32_t imageCount = caps.minImageCount + 1;
-    if (chosenPresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
-        imageCount = std::max(imageCount, 3u);
+    uint32_t imageCount = info.imageCount;
+    if (imageCount < caps.minImageCount) {
+        imageCount = caps.minImageCount;
     }
     if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount) {
         imageCount = caps.maxImageCount;

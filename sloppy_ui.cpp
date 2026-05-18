@@ -25,6 +25,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -47,6 +49,7 @@ struct AppOptions {
     bool skipGridForeground = false;
     bool blurredBackgroundFullRect = false;
     bool benchmarkUncappedPresent = false;
+    uint32_t swapchainImageCount = 3;
 };
 
 struct AppState {
@@ -69,6 +72,7 @@ struct AppState {
     int width = kWindowWidth;
     int height = kWindowHeight;
     bool benchmarkUncappedPresent = false;
+    uint32_t swapchainImageCount = 3;
     skgpu::VulkanBackendContext backendContext;
     std::unique_ptr<skgpu::VulkanExtensions> extensions;
     VkPhysicalDeviceFeatures2 deviceFeatures2 = {};
@@ -116,6 +120,7 @@ static void shutdown(AppState& state) {
 
 static bool setup(AppState& state, const AppOptions& options) {
     state.benchmarkUncappedPresent = options.benchmarkUncappedPresent;
+    state.swapchainImageCount = options.swapchainImageCount;
 #if SLOPPY_UI_DIRECT_TO_DISPLAY
     state.extensions = std::make_unique<skgpu::VulkanExtensions>();
 
@@ -332,6 +337,7 @@ static bool setup(AppState& state, const AppOptions& options) {
     swapInfo.width = state.width;
     swapInfo.height = state.height;
     swapInfo.preferMailboxPresent = state.benchmarkUncappedPresent;
+    swapInfo.imageCount = state.swapchainImageCount;
 
     if (!state.swapchain.create(swapInfo)) {
         return false;
@@ -533,6 +539,19 @@ static int runRenderLoop(AppState& state) {
 #endif
 }
 
+static bool parseUnsignedArg(const char* arg, uint32_t* outValue) {
+    if (!arg || !*arg) {
+        return false;
+    }
+    char* end = nullptr;
+    unsigned long value = std::strtoul(arg, &end, 10);
+    if (*end != '\0' || value == 0 || value > UINT32_MAX) {
+        return false;
+    }
+    *outValue = static_cast<uint32_t>(value);
+    return true;
+}
+
 static bool parseArgs(int argc, char** argv, AppOptions& options) {
     for (int i = 1; i < argc; ++i) {
         std::string_view arg = argv[i];
@@ -552,6 +571,14 @@ static bool parseArgs(int argc, char** argv, AppOptions& options) {
             options.benchmarkUncappedPresent = true;
             continue;
         }
+        if (arg == "--swapchain-images") {
+            if (i + 1 >= argc || !parseUnsignedArg(argv[i + 1], &options.swapchainImageCount)) {
+                fprintf(stderr, "Error: --swapchain-images requires a positive integer.\n");
+                return false;
+            }
+            ++i;
+            continue;
+        }
         if (arg == "--help" || arg == "-h") {
             fprintf(stderr,
                     "Usage: sloppy_ui [options]\n"
@@ -559,13 +586,15 @@ static bool parseArgs(int argc, char** argv, AppOptions& options) {
                     "  --skip-grid|--no-grid   Skip grid foreground\n"
                     "  --blur-full-image|--no-blur-mesh   Full-screen blur variant\n"
                     "  --benchmark             Prefer MAILBOX swapchain present; direct-to-display builds\n"
-                    "                          also omit the pace thread and wake immediately after present\n");
+                    "                          also omit the pace thread and wake immediately after present\n"
+                    "  --swapchain-images <N>  Number of swapchain images (default: 3)\n");
             return false;
         }
         fprintf(stderr, "Unknown argument: %s\n", argv[i]);
         fprintf(stderr,
                 "Usage: sloppy_ui [--show-fps] [--skip-grid|--no-grid] "
-                "[--blur-full-image|--no-blur-mesh] [--benchmark]\n");
+                "[--blur-full-image|--no-blur-mesh] [--benchmark] "
+                "[--swapchain-images <N>]\n");
         return false;
     }
     return true;
