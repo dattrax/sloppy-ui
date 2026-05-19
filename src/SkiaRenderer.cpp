@@ -574,6 +574,10 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     if (fDetailMode) {
         if (key == platform::kKeyEscape) {
             fDetailMode = false;
+            fPosterCache = nullptr;
+            fPosterCacheWidth = 0;
+            fPosterCacheHeight = 0;
+            fPosterCacheIndex = -1;
             clearInputQueue();
         }
         return;

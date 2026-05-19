@@ -1,15 +1,20 @@
 #include "SkiaRenderer.hpp"
+#include "include/core/SkBlendMode.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkImage.h"
+#include "include/core/SkImageInfo.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkShader.h"
+#include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
 #include "include/effects/SkGradient.h"
+#include "include/gpu/ganesh/GrTypes.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -88,44 +93,61 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
     }
 
     const Movie& movie = fMovies[fDetailIndex];
-    sk_sp<SkImage> poster = posterForDetail(fDetailIndex);
-
-    if (poster) {
-        float imgW = static_cast<float>(poster->width());
-        float imgH = static_cast<float>(poster->height());
-        float scale = std::max(static_cast<float>(width) / imgW, static_cast<float>(height) / imgH);
-        float dstW = imgW * scale;
-        float dstH = imgH * scale;
-        float dstX = (static_cast<float>(width) - dstW) * 0.5f;
-        float dstY = (static_cast<float>(height) - dstH) * 0.5f;
-        SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
-
-        canvas->save();
-        canvas->clipRect(SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height)), true);
-        canvas->drawImageRect(poster, dstRect, detailSampling());
-        canvas->restore();
-    } else {
-        canvas->drawColor(SK_ColorDKGRAY);
-    }
 
     const float panelLeft = std::round(static_cast<float>(width) * (1.0f - kDetailPanelFraction));
     const float featherW = std::round(static_cast<float>(width) * kDetailFeatherFraction);
     const float featherLeft = panelLeft - featherW;
     const SkColor panelColor = SkColorSetA(SK_ColorBLACK, 200);
 
-    SkPoint gradPts[2] = {{featherLeft, 0.0f}, {panelLeft, 0.0f}};
-    SkColor4f gradColorStops[2] = {
-        SkColor4f::FromColor(SK_ColorTRANSPARENT),
-        SkColor4f::FromColor(panelColor),
-    };
-    SkGradient::Colors gradColors(SkSpan<const SkColor4f>(gradColorStops, 2), SkTileMode::kClamp);
-    SkGradient gradSpec(gradColors, SkGradient::Interpolation{});
-    sk_sp<SkShader> gradShader = SkShaders::LinearGradient(gradPts, gradSpec, nullptr);
-    SkPaint featherPaint;
-    featherPaint.setShader(gradShader);
-    featherPaint.setAntiAlias(false);
-    canvas->drawRect(SkRect::MakeLTRB(featherLeft, 0.0f, static_cast<float>(width), static_cast<float>(height)),
-        featherPaint);
+    if (!fPosterCache || fPosterCacheIndex != fDetailIndex ||
+        fPosterCacheWidth != width || fPosterCacheHeight != height) {
+        SkImageInfo info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+        sk_sp<SkSurface> surface = SkSurfaces::RenderTarget(fContext.get(), skgpu::Budgeted::kNo, info);
+        if (surface) {
+            SkCanvas* offscreen = surface->getCanvas();
+
+            sk_sp<SkImage> poster = posterForDetail(fDetailIndex);
+            if (poster) {
+                float imgW = static_cast<float>(poster->width());
+                float imgH = static_cast<float>(poster->height());
+                float scale = std::max(static_cast<float>(width) / imgW, static_cast<float>(height) / imgH);
+                float dstW = imgW * scale;
+                float dstH = imgH * scale;
+                float dstX = (static_cast<float>(width) - dstW) * 0.5f;
+                float dstY = (static_cast<float>(height) - dstH) * 0.5f;
+                SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
+
+                offscreen->drawImageRect(poster, dstRect, detailSampling());
+            } else {
+                offscreen->drawColor(SK_ColorDKGRAY);
+            }
+
+            SkPoint gradPts[2] = {{featherLeft, 0.0f}, {panelLeft, 0.0f}};
+            SkColor4f gradColorStops[2] = {
+                SkColor4f::FromColor(SK_ColorTRANSPARENT),
+                SkColor4f::FromColor(panelColor),
+            };
+            SkGradient::Colors gradColors(SkSpan<const SkColor4f>(gradColorStops, 2), SkTileMode::kClamp);
+            SkGradient gradSpec(gradColors, SkGradient::Interpolation{});
+            sk_sp<SkShader> gradShader = SkShaders::LinearGradient(gradPts, gradSpec, nullptr);
+            SkPaint featherPaint;
+            featherPaint.setShader(gradShader);
+            featherPaint.setAntiAlias(false);
+            offscreen->drawRect(SkRect::MakeLTRB(featherLeft, 0.0f, static_cast<float>(width), static_cast<float>(height)),
+                featherPaint);
+
+            fPosterCache = surface->makeImageSnapshot();
+            fPosterCacheIndex = fDetailIndex;
+            fPosterCacheWidth = width;
+            fPosterCacheHeight = height;
+        }
+    }
+
+    if (fPosterCache) {
+        SkPaint posterCachePaint;
+        posterCachePaint.setBlendMode(SkBlendMode::kSrc);
+        canvas->drawImage(fPosterCache, 0.0f, 0.0f, SkSamplingOptions(), &posterCachePaint);
+    }
 
     const float panelPad = kDetailPanelPadding * s;
     const float innerLeft = panelLeft + panelPad;

@@ -232,6 +232,10 @@ private:
 
     bool fDetailMode = false;
     int fDetailIndex = 0;
+    sk_sp<SkImage> fPosterCache;
+    int fPosterCacheWidth = 0;
+    int fPosterCacheHeight = 0;
+    int fPosterCacheIndex = -1;
 
     bool makeLoadingPlaceholder();
     void decodeThreadMain();
