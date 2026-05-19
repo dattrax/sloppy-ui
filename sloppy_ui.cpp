@@ -461,11 +461,7 @@ static int runRenderLoop(AppState& state) {
         }
         std::pair<int, bool> queuedEvent;
         while (state.skiaRenderer.pollInputEvent(queuedEvent)) {
-            const bool wasDetail = state.skiaRenderer.detailMode();
             state.skiaRenderer.processInputEvent(queuedEvent.first, queuedEvent.second);
-            if (queuedEvent.first == platform::kKeyEscape && queuedEvent.second && !wasDetail) {
-                return stopPacerAndReturn(0);
-            }
         }
 
         if (!state.swapchain.acquire(&currentImageIndex, &acquireResult)) {
