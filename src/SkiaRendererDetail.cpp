@@ -1,4 +1,6 @@
 #include "SkiaRenderer.hpp"
+#include "ImageFit.hpp"
+#include "SkiaSampling.hpp"
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
@@ -20,12 +22,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
-namespace {
-SkSamplingOptions detailSampling() {
-    return SkSamplingOptions(SkCubicResampler::CatmullRom());
-}
-}
 
 std::string SkiaRenderer::formatDetailPrice(const Movie& movie) {
     if (movie.ppv_price == "Free") {
@@ -110,14 +106,8 @@ void SkiaRenderer::drawDetailView(SkCanvas* canvas, int width, int height) {
             if (poster) {
                 float imgW = static_cast<float>(poster->width());
                 float imgH = static_cast<float>(poster->height());
-                float scale = std::max(static_cast<float>(width) / imgW, static_cast<float>(height) / imgH);
-                float dstW = imgW * scale;
-                float dstH = imgH * scale;
-                float dstX = (static_cast<float>(width) - dstW) * 0.5f;
-                float dstY = (static_cast<float>(height) - dstH) * 0.5f;
-                SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
-
-                offscreen->drawImageRect(poster, dstRect, detailSampling());
+                SkRect dstRect = fitImageCover(static_cast<float>(width), static_cast<float>(height), imgW, imgH);
+                offscreen->drawImageRect(poster, dstRect, skLinearSampling());
             } else {
                 offscreen->drawColor(SK_ColorDKGRAY);
             }

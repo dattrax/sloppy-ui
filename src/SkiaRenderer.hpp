@@ -7,6 +7,7 @@
 
 #include "BlurBackgroundCache.hpp"
 #include "BlurBackgroundMesh.hpp"
+#include "GridLayout.hpp"
 #include "Movie.hpp"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
@@ -85,6 +86,12 @@ private:
         Failed,
     };
 
+    enum class PosterImageRole {
+        Grid,
+        Background,
+        Detail,
+    };
+
     struct PosterSlot {
         sk_sp<SkImage> fGridImage;
         sk_sp<SkImage> fBackgroundImage;
@@ -124,8 +131,7 @@ private:
     SkColorMatrix fMatrix;
     BlurBackgroundCache fBlurBackgroundCache{{kBackgroundBlurRadius,
         1.0f - (static_cast<float>(kBackgroundDimAlpha) / 255.0f)}};
-    BlurBackgroundMeshBuilder fBlurBackgroundMesh{{
-        kGridCols, kGridRows, kPadding, kTitleSpace, kBlurHoleInset, kCornerRadius}};
+    BlurBackgroundMeshBuilder fBlurBackgroundMesh{kGridLayout};
 
     std::mutex fDecodeMutex;
     std::condition_variable fDecodeCv;
@@ -149,19 +155,14 @@ private:
     int fTileTargetWidth = 0;
     int fTileTargetHeight = 0;
 
+    static inline const GridLayout kGridLayout{};
     static constexpr float kDesignWidth = 1280.0f;
     static constexpr float kDesignHeight = 720.0f;
-    static constexpr int kGridCols = 4;
-    static constexpr int kGridRows = 3;
     static constexpr float kScrollDuration = 0.42f;
     static constexpr float kTitleFontSize = 28.0f;
-    static constexpr float kTitleSpace = 32.0f;
-    static constexpr float kPadding = 8.0f;
     static constexpr float kBackgroundFadeDuration = 0.50f;
     static constexpr uint32_t kBackgroundBlurRadius = 16;
     static constexpr uint8_t kBackgroundDimAlpha = 150;
-    static constexpr float kBlurHoleInset = 1.5f;
-    static constexpr float kCornerRadius = 12.0f;
     static constexpr float kSelectionOffset = 0.0f;
     static constexpr float kSelectionStrokeWidth = 3.0f;
     static constexpr float kTextScrollSpeed = 60.0f;
@@ -210,6 +211,8 @@ private:
 
     void rebuildTitleCache(float cellW);
     void finishScroll();
+    GridScrollLimits computeGridScrollLimits(int itemCount) const;
+    void beginVerticalScroll(int targetOffset, bool scrollingDown);
     float easeInOut(float t) const;
     static std::string ellipsizeText(const std::string& text, float maxWidth, SkFont& font);
     void drawDetailView(SkCanvas* canvas, int width, int height);
@@ -245,6 +248,8 @@ private:
     void requestPosterDecode(int movieIndex);
     void updatePosterCache(double now);
     void evictPosterCache(double now, const std::vector<int>& touched);
+    void clearPosterSlotImages(PosterSlot& slot);
+    sk_sp<SkImage> posterForSlot(int movieIndex, PosterImageRole role) const;
     sk_sp<SkImage> posterForGrid(int movieIndex) const;
     sk_sp<SkImage> posterForBackground(int movieIndex) const;
     sk_sp<SkImage> posterForDetail(int movieIndex);

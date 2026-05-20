@@ -1,4 +1,5 @@
 #include "KawaseBlurFilter.hpp"
+#include "SkiaSampling.hpp"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMatrix.h"
@@ -72,7 +73,7 @@ sk_sp<SkImage> KawaseBlurFilter::generate(GrRecordingContext* context, uint32_t 
     SkMatrix blurMatrix = SkMatrix::Translate(-blurRect.fLeft, -blurRect.fTop);
     blurMatrix.postScale(kInputScale, kInputScale);
 
-    const SkSamplingOptions linear(SkFilterMode::kLinear, SkMipmapMode::kNone);
+    const SkSamplingOptions linear = skLinearSampling();
     SkRuntimeShaderBuilder blurBuilder(fBlurEffect);
     blurBuilder.child("child") = input->makeShader(linear, blurMatrix);
     blurBuilder.uniform("in_blurOffset") = radiusByPasses * kInputScale;

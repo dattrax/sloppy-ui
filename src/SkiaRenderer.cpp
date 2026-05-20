@@ -1,6 +1,9 @@
 #include "SkiaRenderer.hpp"
 #include "BlurBackgroundMesh.hpp"
+#include "GridLayout.hpp"
+#include "ImageFit.hpp"
 #include "PlatformInput.hpp"
+#include "SkiaSampling.hpp"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkColorFilter.h"
@@ -44,14 +47,6 @@
 #include <utility>
 
 namespace {
-
-SkSamplingOptions gridSampling() {
-    return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
-}
-
-SkSamplingOptions backgroundSampling() {
-    return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
-}
 
 static constexpr float kFpsSmoothingWindowSeconds = 3.0f;
 static constexpr float kFpsConsoleLogIntervalSeconds = 1.0f;
@@ -180,28 +175,37 @@ void SkiaRenderer::finishScroll() {
     fScrollProgress = 1.0f;
     fScrollOffset = fTargetOffset;
     fIsScrolling = false;
-    const int visibleRows = kGridRows;
     const size_t itemCount = fMovies.size();
     if (itemCount == 0) {
         clearInputQueue();
         return;
     }
-    const int totalRows =
-        static_cast<int>(itemCount / kGridCols + (itemCount % kGridCols != 0));
-    const int maxOffset = std::max(0, totalRows - visibleRows);
-    const int focusRow = fFocusIndex / kGridCols;
+    const GridScrollLimits limits = computeGridScrollLimits(static_cast<int>(itemCount));
+    const int focusRow = fFocusIndex / kGridLayout.cols;
     if (focusRow < fScrollOffset) {
         fScrollOffset = focusRow;
-    } else if (focusRow >= fScrollOffset + visibleRows) {
-        fScrollOffset = focusRow - visibleRows + 1;
+    } else if (focusRow >= fScrollOffset + kGridLayout.rows) {
+        fScrollOffset = focusRow - kGridLayout.rows + 1;
     }
-    if (fScrollOffset > maxOffset) {
-        fScrollOffset = maxOffset;
+    if (fScrollOffset > limits.maxOffset) {
+        fScrollOffset = limits.maxOffset;
     }
     if (fScrollOffset < 0) {
         fScrollOffset = 0;
     }
     clearInputQueue();
+}
+
+GridScrollLimits SkiaRenderer::computeGridScrollLimits(int itemCount) const {
+    return ::computeGridScrollLimits(kGridLayout, itemCount);
+}
+
+void SkiaRenderer::beginVerticalScroll(int targetOffset, bool scrollingDown) {
+    fTargetOffset = targetOffset;
+    fIsScrolling = true;
+    fScrollProgress = 0.0f;
+    fScrollStartTime = static_cast<float>(platform::nowSeconds());
+    fScrollingDown = scrollingDown;
 }
 
 float SkiaRenderer::layoutScale(int width, int height) {
@@ -260,15 +264,15 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     }
     canvas->clear(SK_ColorBLACK);
 
-    const float pad = kPadding * uiScale;
-    const float titleSpace = kTitleSpace * uiScale;
-    const float cellH = (height - pad * (kGridRows + 1) - titleSpace * kGridRows) / kGridRows;
+    const GridLayoutMetrics gridMetrics = computeGridLayout(kGridLayout, width, height, uiScale);
+    const float titleSpace = gridMetrics.titleSpace;
+    const float cellH = gridMetrics.cellH;
     float scrollY = 0.0f;
     if (fIsScrolling) {
         float t = easeInOut(fScrollProgress);
-        scrollY = t * (height / kGridRows) * (fScrollingDown ? 1.0f : -1.0f);
+        scrollY = t * (height / kGridLayout.rows) * (fScrollingDown ? 1.0f : -1.0f);
     }
-    const float cellW = (width - pad * (kGridCols + 1)) / kGridCols;
+    const float cellW = gridMetrics.cellW;
 
     if (cellW != fCachedCellW || uiScale != fCachedUiScale) {
         rebuildTitleCache(cellW);
@@ -288,16 +292,11 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         if (imgW <= 0.0f || imgH <= 0.0f) {
             return;
         }
-        const float scale = std::max(static_cast<float>(width) / imgW, static_cast<float>(height) / imgH);
-        const float dstW = imgW * scale;
-        const float dstH = imgH * scale;
-        const float dstX = (static_cast<float>(width) - dstW) * 0.5f;
-        const float dstY = (static_cast<float>(height) - dstH) * 0.5f;
-        SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
+        SkRect dstRect = fitImageCover(static_cast<float>(width), static_cast<float>(height), imgW, imgH);
         SkPaint bgPaint;
         bgPaint.setAntiAlias(true);
         bgPaint.setAlphaf(std::max(0.0f, std::min(1.0f, alpha)));
-        targetCanvas->drawImageRect(bg, dstRect, backgroundSampling(), &bgPaint);
+        targetCanvas->drawImageRect(bg, dstRect, skLinearSampling(), &bgPaint);
     };
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
 
@@ -354,10 +353,10 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         const SkBlendMode blendMode = opaque ? SkBlendMode::kSrc : SkBlendMode::kSrcOver;
         paint.setBlendMode(blendMode);
         if (fBlurredBackgroundFullRect || !blurMesh) {
-            canvas->drawImageRect(blur, backgroundRect, backgroundSampling(), &paint);
+            canvas->drawImageRect(blur, backgroundRect, skLinearSampling(), &paint);
             return;
         }
-        paint.setShader(blur->makeShader(backgroundSampling()));
+        paint.setShader(blur->makeShader(skLinearSampling()));
         canvas->drawVertices(blurMesh, blendMode, paint);
     };
 
@@ -391,65 +390,54 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
         return;
     }
 
-    const float cornerR = kCornerRadius * uiScale;
+    const float cornerR = gridMetrics.cornerR;
     const float selOffset = kSelectionOffset * uiScale;
 
-    const int focusRow = fFocusIndex / kGridCols;
-    for (int row = 0; row < kGridRows; ++row) {
+    const int focusRow = fFocusIndex / kGridLayout.cols;
+    const SkRect screenRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
+    const std::vector<GridCellPlacement> placements = collectVisibleGridPlacements(
+        kGridLayout, gridMetrics, fScrollOffset, static_cast<int>(fMovies.size()), scrollY, screenRect,
+        [this](int movieIndex) { return posterForGrid(movieIndex); });
+
+    for (const GridCellPlacement& placement : placements) {
+        const int idx = placement.movieIndex;
+        sk_sp<SkImage> img = posterForGrid(idx);
+        if (!img) {
+            continue;
+        }
+
+        const int row = (idx / kGridLayout.cols) - fScrollOffset;
         bool rowHasHighlight = (fScrollOffset + row) == focusRow;
+        SkRect dstRect = placement.imageRect;
+        SkRRect rrect = SkRRect::MakeRectXY(dstRect, cornerR, cornerR);
 
-        for (int col = 0; col < kGridCols; ++col) {
-            int idx = (fScrollOffset + row) * kGridCols + col;
-            if (idx >= static_cast<int>(fMovies.size())) {
-                continue;
-            }
-            sk_sp<SkImage> img = posterForGrid(idx);
-            if (!img) {
-                continue;
-            }
+        canvas->save();
+        canvas->clipRRect(rrect, false);
+        if (rowHasHighlight) {
+            canvas->drawImageRect(img, dstRect, skLinearSampling(), nullptr);
+        } else {
+            canvas->drawImageRect(img, dstRect, skLinearSampling(), &fDimPaint);
+        }
+        canvas->restore();
 
-            float cellX = pad + col * (cellW + pad);
-            float cellY = pad + row * (cellH + pad + titleSpace) - scrollY;
+        if (idx == fFocusIndex) {
+            SkRect selRect = dstRect.makeOutset(selOffset, selOffset);
+            SkRRect selRRect = SkRRect::MakeRectXY(selRect,
+                cornerR + selOffset, cornerR + selOffset);
+            canvas->drawRRect(selRRect, fSelectionPaint);
+        }
 
-            float imgW = static_cast<float>(img->width());
-            float imgH = static_cast<float>(img->height());
-            float scale = std::min(cellW / imgW, cellH / imgH);
-            float dstW = imgW * scale;
-            float dstH = imgH * scale;
-            float dstX = cellX + (cellW - dstW) * 0.5f;
-            float dstY = cellY + (cellH - dstH) * 0.5f;
-
-            SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
-            SkRRect rrect = SkRRect::MakeRectXY(dstRect, cornerR, cornerR);
-
-            canvas->save();
-            canvas->clipRRect(rrect, false);
-            if (rowHasHighlight) {
-                canvas->drawImageRect(img, dstRect, gridSampling(), nullptr);
-            } else {
-                canvas->drawImageRect(img, dstRect, gridSampling(), &fDimPaint);
-            }
-            canvas->restore();
+        if (idx < static_cast<int>(fTitleCache.size()) && fTitleCache[idx].blob) {
+            float titleX = placement.cellRect.left() + (placement.cellRect.width() - fTitleCache[idx].width) * 0.5f;
+            float titleY = placement.cellRect.top() + cellH + titleSpace * 0.75f;
 
             if (idx == fFocusIndex) {
-                SkRect selRect = dstRect.makeOutset(selOffset, selOffset);
-                SkRRect selRRect = SkRRect::MakeRectXY(selRect,
-                    cornerR + selOffset, cornerR + selOffset);
-                canvas->drawRRect(selRRect, fSelectionPaint);
-            }
-
-            if (idx < static_cast<int>(fTitleCache.size()) && fTitleCache[idx].blob) {
-                float titleX = cellX + (cellW - fTitleCache[idx].width) * 0.5f;
-                float titleY = cellY + cellH + titleSpace * 0.75f;
-
-                if (idx == fFocusIndex) {
-                    float maxWidth = cellW * 0.9f;
-                    float textY = titleY;
-                    drawScrollingText(canvas, fTitleCache[idx].fullText, titleX, textY, maxWidth, fTitlePaint,
-                                      time, uiScale);
-                } else {
-                    canvas->drawTextBlob(fTitleCache[idx].blob, titleX, titleY, fTitlePaint);
-                }
+                float maxWidth = cellW * 0.9f;
+                float textY = titleY;
+                drawScrollingText(canvas, fTitleCache[idx].fullText, titleX, textY, maxWidth, fTitlePaint,
+                                  time, uiScale);
+            } else {
+                canvas->drawTextBlob(fTitleCache[idx].blob, titleX, titleY, fTitlePaint);
             }
         }
     }

@@ -50,10 +50,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     }
 
     const int maxIndex = itemCount - 1;
-    const int visibleRows = kGridRows;
-    const int totalRows =
-        static_cast<int>(static_cast<size_t>(itemCount) / kGridCols + (itemCount % kGridCols != 0));
-    const int maxOffset = std::max(0, totalRows - visibleRows);
+    const GridScrollLimits limits = computeGridScrollLimits(itemCount);
 
     if (key == platform::kKeyEnter || key == platform::kKeyKpEnter) {
         if (fFocusIndex >= 0 && fFocusIndex < itemCount) {
@@ -64,28 +61,24 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
     }
 
     int previousFocus = fFocusIndex;
-    int focusRow = fFocusIndex / kGridCols;
-    int focusCol = fFocusIndex % kGridCols;
+    int focusRow = fFocusIndex / kGridLayout.cols;
+    int focusCol = fFocusIndex % kGridLayout.cols;
     bool changed = false;
 
     switch (key) {
         case platform::kKeyUp:
             if (focusRow > 0) {
-                fFocusIndex -= kGridCols;
+                fFocusIndex -= kGridLayout.cols;
                 changed = true;
-                focusRow = fFocusIndex / kGridCols;
+                focusRow = fFocusIndex / kGridLayout.cols;
                 if (focusRow < fScrollOffset && fScrollOffset > 0) {
-                    fTargetOffset = fScrollOffset - 1;
-                    fIsScrolling = true;
-                    fScrollProgress = 0.0f;
-                    fScrollStartTime = static_cast<float>(platform::nowSeconds());
-                    fScrollingDown = false;
+                    beginVerticalScroll(fScrollOffset - 1, false);
                 }
             }
             break;
         case platform::kKeyDown:
-            if (focusRow < totalRows - 1) {
-                int nextIdx = (focusRow + 1) * kGridCols + focusCol;
+            if (focusRow < limits.totalRows - 1) {
+                int nextIdx = (focusRow + 1) * kGridLayout.cols + focusCol;
                 if (nextIdx > maxIndex) {
                     nextIdx = maxIndex;
                 }
@@ -93,13 +86,9 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
                     fFocusIndex = nextIdx;
                     changed = true;
                 }
-                focusRow = fFocusIndex / kGridCols;
-                if (focusRow >= fScrollOffset + visibleRows && fScrollOffset < maxOffset) {
-                    fTargetOffset = fScrollOffset + 1;
-                    fIsScrolling = true;
-                    fScrollProgress = 0.0f;
-                    fScrollStartTime = static_cast<float>(platform::nowSeconds());
-                    fScrollingDown = true;
+                focusRow = fFocusIndex / kGridLayout.cols;
+                if (focusRow >= fScrollOffset + kGridLayout.rows && fScrollOffset < limits.maxOffset) {
+                    beginVerticalScroll(fScrollOffset + 1, true);
                 }
             }
             break;
@@ -110,7 +99,7 @@ void SkiaRenderer::processInputEvent(int key, bool pressed) {
             }
             break;
         case platform::kKeyRight:
-            if (focusCol < kGridCols - 1 && fFocusIndex < maxIndex) {
+            if (focusCol < kGridLayout.cols - 1 && fFocusIndex < maxIndex) {
                 fFocusIndex++;
                 changed = true;
             }

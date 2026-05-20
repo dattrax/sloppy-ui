@@ -1,5 +1,6 @@
 #include "BlurBackgroundMesh.hpp"
 
+#include "GridLayout.hpp"
 #include "include/core/SkRect.h"
 
 #include <algorithm>
@@ -54,7 +55,7 @@ void appendRectTriangles(std::vector<SkPoint>& positions, std::vector<SkPoint>& 
 
 }  // namespace
 
-BlurBackgroundMeshBuilder::BlurBackgroundMeshBuilder(Layout layout)
+BlurBackgroundMeshBuilder::BlurBackgroundMeshBuilder(GridLayout layout)
     : fLayout(layout) {}
 
 sk_sp<SkVertices> BlurBackgroundMeshBuilder::build(
@@ -63,50 +64,16 @@ sk_sp<SkVertices> BlurBackgroundMeshBuilder::build(
 
     const float wf = static_cast<float>(frame.width);
     const float hf = static_cast<float>(frame.height);
-    const float pad = fLayout.paddingDesign * frame.uiScale;
-    const float titleSpace = fLayout.titleSpaceDesign * frame.uiScale;
-    const float cellH = (static_cast<float>(frame.height) - pad * static_cast<float>(fLayout.gridRows + 1) -
-                            titleSpace * static_cast<float>(fLayout.gridRows)) /
-                        static_cast<float>(fLayout.gridRows);
-    const float cellW = (static_cast<float>(frame.width) - pad * static_cast<float>(fLayout.gridCols + 1)) /
-                        static_cast<float>(fLayout.gridCols);
-    const float cornerR = fLayout.cornerRadiusDesign * frame.uiScale;
-    const float holeInset = fLayout.blurHoleInsetDesign * frame.uiScale + cornerR;
+    const GridLayoutMetrics metrics = computeGridLayout(fLayout, frame.width, frame.height, frame.uiScale);
     const SkRect screenRect = SkRect::MakeWH(wf, hf);
 
+    const std::vector<GridCellPlacement> placements = collectVisibleGridPlacements(
+        fLayout, metrics, frame.scrollOffset, frame.movieCount, frame.scrollY, screenRect, posterForGrid);
+
     std::vector<SkRect> holes;
-    holes.reserve(static_cast<size_t>(fLayout.gridCols * fLayout.gridRows));
-
-    for (int row = 0; row < fLayout.gridRows; ++row) {
-        for (int col = 0; col < fLayout.gridCols; ++col) {
-            int idx = (frame.scrollOffset + row) * fLayout.gridCols + col;
-            if (idx >= frame.movieCount) {
-                continue;
-            }
-            sk_sp<SkImage> img = posterForGrid(idx);
-            if (!img) {
-                continue;
-            }
-
-            float cellX = pad + static_cast<float>(col) * (cellW + pad);
-            float cellY = pad + static_cast<float>(row) * (cellH + pad + titleSpace) - frame.scrollY;
-            float imgW = static_cast<float>(img->width());
-            float imgH = static_cast<float>(img->height());
-            float scale = std::min(cellW / imgW, cellH / imgH);
-            float dstW = imgW * scale;
-            float dstH = imgH * scale;
-            float dstX = cellX + (cellW - dstW) * 0.5f;
-            float dstY = cellY + (cellH - dstH) * 0.5f;
-            SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
-            SkRect holeRect = dstRect.makeInset(holeInset, holeInset);
-            if (holeRect.width() <= 0.0f || holeRect.height() <= 0.0f) {
-                continue;
-            }
-            if (!holeRect.intersect(screenRect)) {
-                continue;
-            }
-            holes.push_back(holeRect);
-        }
+    holes.reserve(placements.size());
+    for (const GridCellPlacement& placement : placements) {
+        holes.push_back(placement.holeRect);
     }
 
     std::vector<float> ys;

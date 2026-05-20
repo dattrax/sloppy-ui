@@ -427,6 +427,51 @@ static void runPaceLoop(FrameWake* wake, std::stop_token token) {
 
 #endif  // SLOPPY_UI_DIRECT_TO_DISPLAY
 
+enum class RenderFrameResult {
+    Ok,
+    OutOfDate,
+    Error,
+};
+
+static void drainInputWhileScrolling(AppState& state) {
+    if (state.skiaRenderer.isScrolling()) {
+        state.skiaRenderer.clearInputQueue();
+    }
+}
+
+static void processQueuedInput(AppState& state) {
+    std::pair<int, bool> event;
+    while (state.skiaRenderer.pollInputEvent(event)) {
+        state.skiaRenderer.processInputEvent(event.first, event.second);
+    }
+}
+
+static RenderFrameResult renderSwapchainFrame(AppState& state, float time, uint32_t& currentImageIndex) {
+    VkResult acquireResult;
+    if (!state.swapchain.acquire(&currentImageIndex, &acquireResult)) {
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR) {
+            return RenderFrameResult::OutOfDate;
+        }
+        return RenderFrameResult::Error;
+    }
+
+    SwapchainImage* img = state.swapchain.image(currentImageIndex);
+    SkSurface* surf = img->fSurface.get();
+    SkCanvas* canvas = surf->getCanvas();
+
+    state.skiaRenderer.draw(canvas, state.width, state.height, time);
+    state.skiaRenderer.flushAndSubmit(surf, img->fRenderCompleteSemaphore, state.presentQueueIndex);
+
+    VkResult presentResult;
+    if (!state.swapchain.present(currentImageIndex, &presentResult)) {
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+            return RenderFrameResult::OutOfDate;
+        }
+        return RenderFrameResult::Error;
+    }
+    return RenderFrameResult::Ok;
+}
+
 static int runRenderLoop(AppState& state) {
 #if SLOPPY_UI_DIRECT_TO_DISPLAY
     FrameWake frameWake;
@@ -445,45 +490,25 @@ static int runRenderLoop(AppState& state) {
     };
 
     uint32_t currentImageIndex = 0;
-    VkResult acquireResult;
 
     while (true) {
         if (!frameWake.waitForWake()) {
             break;
         }
 
-        if (state.skiaRenderer.isScrolling()) {
-            state.skiaRenderer.clearInputQueue();
-        }
+        drainInputWhileScrolling(state);
         SloppyInputEvent inputEvent = {};
         while (state.directInput.pollEvent(&inputEvent)) {
             state.skiaRenderer.enqueueInputEvent(inputEvent.key, inputEvent.pressed != 0);
         }
-        std::pair<int, bool> queuedEvent;
-        while (state.skiaRenderer.pollInputEvent(queuedEvent)) {
-            state.skiaRenderer.processInputEvent(queuedEvent.first, queuedEvent.second);
+        processQueuedInput(state);
+
+        const float t = static_cast<float>(platform::nowSeconds());
+        const RenderFrameResult frameResult = renderSwapchainFrame(state, t, currentImageIndex);
+        if (frameResult == RenderFrameResult::OutOfDate) {
+            break;
         }
-
-        if (!state.swapchain.acquire(&currentImageIndex, &acquireResult)) {
-            if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR) {
-                break;
-            }
-            return stopPacerAndReturn(1);
-        }
-
-        SwapchainImage* img = state.swapchain.image(currentImageIndex);
-        SkSurface* surf = img->fSurface.get();
-        SkCanvas* canvas = surf->getCanvas();
-        float t = static_cast<float>(platform::nowSeconds());
-
-        state.skiaRenderer.draw(canvas, state.width, state.height, t);
-        state.skiaRenderer.flushAndSubmit(surf, img->fRenderCompleteSemaphore, state.presentQueueIndex);
-
-        VkResult presentResult;
-        if (!state.swapchain.present(currentImageIndex, &presentResult)) {
-            if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
-                break;
-            }
+        if (frameResult == RenderFrameResult::Error) {
             return stopPacerAndReturn(1);
         }
         if (state.benchmarkUncappedPresent) {
@@ -493,41 +518,21 @@ static int runRenderLoop(AppState& state) {
     return stopPacerAndReturn(0);
 #else
     uint32_t currentImageIndex = 0;
-    VkResult acquireResult;
 
     while (!glfwWindowShouldClose(state.window)) {
         glfwWaitEventsTimeout(kIdleFrameWait);
 
         if (state.inputProcessor) {
-            if (state.skiaRenderer.isScrolling()) {
-                state.skiaRenderer.clearInputQueue();
-            }
-            std::pair<int, bool> event;
-            while (state.skiaRenderer.pollInputEvent(event)) {
-                state.skiaRenderer.processInputEvent(event.first, event.second);
-            }
+            drainInputWhileScrolling(state);
+            processQueuedInput(state);
         }
 
-        if (!state.swapchain.acquire(&currentImageIndex, &acquireResult)) {
-            if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR) {
-                break;
-            }
-            return 1;
+        const float t = static_cast<float>(glfwGetTime());
+        const RenderFrameResult frameResult = renderSwapchainFrame(state, t, currentImageIndex);
+        if (frameResult == RenderFrameResult::OutOfDate) {
+            break;
         }
-
-        SwapchainImage* img = state.swapchain.image(currentImageIndex);
-        SkSurface* surf = img->fSurface.get();
-        SkCanvas* canvas = surf->getCanvas();
-        float t = (float)glfwGetTime();
-
-        state.skiaRenderer.draw(canvas, state.width, state.height, t);
-        state.skiaRenderer.flushAndSubmit(surf, img->fRenderCompleteSemaphore, state.presentQueueIndex);
-
-        VkResult presentResult;
-        if (!state.swapchain.present(currentImageIndex, &presentResult)) {
-            if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
-                break;
-            }
+        if (frameResult == RenderFrameResult::Error) {
             return 1;
         }
     }

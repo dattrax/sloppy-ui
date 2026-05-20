@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "GridLayout.hpp"
 #include "include/core/SkImage.h"
 #include "include/core/SkVertices.h"
 
@@ -12,16 +13,7 @@
 
 class BlurBackgroundMeshBuilder {
 public:
-    struct Layout {
-        int gridCols = 4;
-        int gridRows = 3;
-        float paddingDesign = 8.0f;
-        float titleSpaceDesign = 32.0f;
-        float blurHoleInsetDesign = 1.5f;
-        float cornerRadiusDesign = 12.0f;
-    };
-
-    explicit BlurBackgroundMeshBuilder(Layout layout);
+    explicit BlurBackgroundMeshBuilder(GridLayout layout);
 
     struct FrameParams {
         int width = 0;
@@ -39,5 +31,5 @@ public:
         const std::function<sk_sp<SkImage>(int movieIndex)>& posterForGrid) const;
 
 private:
-    Layout fLayout;
+    GridLayout fLayout;
 };

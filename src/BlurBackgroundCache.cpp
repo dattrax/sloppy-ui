@@ -1,21 +1,14 @@
 #include "BlurBackgroundCache.hpp"
 
+#include "ImageFit.hpp"
+#include "SkiaSampling.hpp"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkRect.h"
-#include "include/core/SkSamplingOptions.h"
 #include "include/effects/SkColorMatrix.h"
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/ganesh/GrTypes.h"
-
-namespace {
-
-SkSamplingOptions backgroundSampling() {
-    return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
-}
-
-}  // namespace
 
 BlurBackgroundCache::BlurBackgroundCache(const BlurBackgroundCacheConfig& config)
     : fBlurRadius(config.blurRadius), fDimRgbFactor(config.dimRgbFactor) {}
@@ -70,13 +63,8 @@ sk_sp<SkImage> BlurBackgroundCache::buildBlurred(GrDirectContext* context,
         return nullptr;
     }
 
-    const float scale = std::max(static_cast<float>(width) / imgW, static_cast<float>(height) / imgH);
-    const float dstW = imgW * scale;
-    const float dstH = imgH * scale;
-    const float dstX = (static_cast<float>(width) - dstW) * 0.5f;
-    const float dstY = (static_cast<float>(height) - dstH) * 0.5f;
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
-    const SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
+    const SkRect dstRect = fitImageCover(static_cast<float>(width), static_cast<float>(height), imgW, imgH);
 
     SkPaint composePaint;
     composePaint.setAntiAlias(false);
@@ -88,7 +76,7 @@ sk_sp<SkImage> BlurBackgroundCache::buildBlurred(GrDirectContext* context,
 
     SkCanvas* backgroundCanvas = backgroundSurface->getCanvas();
     backgroundCanvas->clear(SK_ColorBLACK);
-    backgroundCanvas->drawImageRect(source, dstRect, backgroundSampling(), &composePaint);
+    backgroundCanvas->drawImageRect(source, dstRect, skLinearSampling(), &composePaint);
 
     sk_sp<SkImage> composed = backgroundSurface->makeImageSnapshot();
     if (!composed) {

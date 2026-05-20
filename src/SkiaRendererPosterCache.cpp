@@ -1,4 +1,6 @@
 #include "SkiaRenderer.hpp"
+#include "GridLayout.hpp"
+#include "SkiaSampling.hpp"
 #include "include/codec/SkCodec.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
@@ -24,12 +26,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-namespace {
-SkSamplingOptions gridSampling() {
-    return SkSamplingOptions(SkCubicResampler::Mitchell());
-}
-}
 
 bool SkiaRenderer::makeLoadingPlaceholder() {
     static const char kLoadingLabel[] = "Loading";
@@ -201,20 +197,14 @@ void SkiaRenderer::drainDecodeCompletions() {
         }
         if (!completion.fSuccess || !completion.fBitmap) {
             slot.fState = PosterState::Failed;
-            slot.fGridImage.reset();
-            slot.fBackgroundImage.reset();
-            slot.fDetailImage.reset();
-            slot.fDetailRaster.reset();
+            clearPosterSlotImages(slot);
             continue;
         }
 
         sk_sp<SkImage> raster = SkImages::RasterFromBitmap(*completion.fBitmap);
         if (!raster) {
             slot.fState = PosterState::Failed;
-            slot.fGridImage.reset();
-            slot.fBackgroundImage.reset();
-            slot.fDetailImage.reset();
-            slot.fDetailRaster.reset();
+            clearPosterSlotImages(slot);
             continue;
         }
 
@@ -251,10 +241,7 @@ void SkiaRenderer::evictPosterCache(double now, const std::vector<int>&) {
         if (slot.fState == PosterState::Ready &&
             (slot.fGridImage || slot.fBackgroundImage || slot.fDetailImage || slot.fDetailRaster)) {
             if (now - slot.fLastUsed > kPosterEvictIdleSeconds) {
-                slot.fGridImage.reset();
-                slot.fBackgroundImage.reset();
-                slot.fDetailImage.reset();
-                slot.fDetailRaster.reset();
+                clearPosterSlotImages(slot);
                 slot.fState = PosterState::Empty;
                 slot.fLoadGeneration++;
                 evictedAny = true;
@@ -274,10 +261,7 @@ void SkiaRenderer::evictPosterCache(double now, const std::vector<int>&) {
             }
         }
         PosterSlot& slot = fPosterSlots[oldestIdx];
-        slot.fGridImage.reset();
-        slot.fBackgroundImage.reset();
-        slot.fDetailImage.reset();
-        slot.fDetailRaster.reset();
+        clearPosterSlotImages(slot);
         slot.fState = PosterState::Empty;
         slot.fLoadGeneration++;
         evictedAny = true;
@@ -293,19 +277,14 @@ void SkiaRenderer::updatePosterCache(double now) {
     drainDecodeCompletions();
 
     std::vector<int> touched;
-    touched.reserve(static_cast<size_t>(kGridCols * kGridRows) + 1u);
+    touched.reserve(static_cast<size_t>(kGridLayout.cols * kGridLayout.rows) + 1u);
     if (fDetailMode) {
         if (fDetailIndex >= 0 && fDetailIndex < static_cast<int>(fMovies.size())) {
             touched.push_back(fDetailIndex);
         }
     } else {
-        for (int row = 0; row < kGridRows; ++row) {
-            for (int col = 0; col < kGridCols; ++col) {
-                int idx = (fScrollOffset + row) * kGridCols + col;
-                if (idx < static_cast<int>(fMovies.size())) {
-                    touched.push_back(idx);
-                }
-            }
+        for (int idx : collectVisibleGridIndices(kGridLayout, fScrollOffset, static_cast<int>(fMovies.size()))) {
+            touched.push_back(idx);
         }
         if (fBackgroundIndex >= 0 && fBackgroundIndex < static_cast<int>(fMovies.size())) {
             touched.push_back(fBackgroundIndex);
@@ -323,36 +302,59 @@ void SkiaRenderer::updatePosterCache(double now) {
     evictPosterCache(now, touched);
 }
 
-sk_sp<SkImage> SkiaRenderer::posterForGrid(int movieIndex) const {
+void SkiaRenderer::clearPosterSlotImages(PosterSlot& slot) {
+    slot.fGridImage.reset();
+    slot.fBackgroundImage.reset();
+    slot.fDetailImage.reset();
+    slot.fDetailRaster.reset();
+}
+
+sk_sp<SkImage> SkiaRenderer::posterForSlot(int movieIndex, PosterImageRole role) const {
     if (movieIndex < 0 || movieIndex >= static_cast<int>(fPosterSlots.size())) {
         return fPosterPlaceholder;
     }
     const PosterSlot& slot = fPosterSlots[movieIndex];
-    if (slot.fState == PosterState::Ready) {
-        if (slot.fGridImage) {
-            return slot.fGridImage;
-        }
-        if (slot.fDetailImage) {
-            return slot.fDetailImage;
-        }
+    if (slot.fState != PosterState::Ready) {
+        return fPosterPlaceholder;
+    }
+    switch (role) {
+        case PosterImageRole::Grid:
+            if (slot.fGridImage) {
+                return slot.fGridImage;
+            }
+            if (slot.fDetailImage) {
+                return slot.fDetailImage;
+            }
+            break;
+        case PosterImageRole::Background:
+            if (slot.fBackgroundImage) {
+                return slot.fBackgroundImage;
+            }
+            if (slot.fDetailImage) {
+                return slot.fDetailImage;
+            }
+            break;
+        case PosterImageRole::Detail:
+            if (slot.fDetailImage) {
+                return slot.fDetailImage;
+            }
+            if (slot.fDetailRaster) {
+                return slot.fDetailRaster;
+            }
+            if (slot.fGridImage) {
+                return slot.fGridImage;
+            }
+            break;
     }
     return fPosterPlaceholder;
 }
 
+sk_sp<SkImage> SkiaRenderer::posterForGrid(int movieIndex) const {
+    return posterForSlot(movieIndex, PosterImageRole::Grid);
+}
+
 sk_sp<SkImage> SkiaRenderer::posterForBackground(int movieIndex) const {
-    if (movieIndex < 0 || movieIndex >= static_cast<int>(fPosterSlots.size())) {
-        return fPosterPlaceholder;
-    }
-    const PosterSlot& slot = fPosterSlots[movieIndex];
-    if (slot.fState == PosterState::Ready) {
-        if (slot.fBackgroundImage) {
-            return slot.fBackgroundImage;
-        }
-        if (slot.fDetailImage) {
-            return slot.fDetailImage;
-        }
-    }
-    return fPosterPlaceholder;
+    return posterForSlot(movieIndex, PosterImageRole::Background);
 }
 
 sk_sp<SkImage> SkiaRenderer::posterForDetail(int movieIndex) {
@@ -374,22 +376,14 @@ sk_sp<SkImage> SkiaRenderer::posterForDetail(int movieIndex) {
         }
         return slot.fDetailRaster;
     }
-    if (slot.fGridImage) {
-        return slot.fGridImage;
-    }
-    return fPosterPlaceholder;
+    return posterForSlot(movieIndex, PosterImageRole::Detail);
 }
 
 SkISize SkiaRenderer::computeTileTargetSize(int width, int height) {
     const float uiScale = layoutScale(width, height);
-    const float pad = kPadding * uiScale;
-    const float titleSpace = kTitleSpace * uiScale;
-    const float cellW = (static_cast<float>(width) - pad * static_cast<float>(kGridCols + 1)) /
-        static_cast<float>(kGridCols);
-    const float cellH = (static_cast<float>(height) - pad * static_cast<float>(kGridRows + 1) -
-        titleSpace * static_cast<float>(kGridRows)) / static_cast<float>(kGridRows);
-    const int targetW = std::max(1, static_cast<int>(std::round(std::max(1.0f, cellW) * kTileOversample)));
-    const int targetH = std::max(1, static_cast<int>(std::round(std::max(1.0f, cellH) * kTileOversample)));
+    const GridLayoutMetrics metrics = computeGridLayout(kGridLayout, width, height, uiScale);
+    const int targetW = std::max(1, static_cast<int>(std::round(std::max(1.0f, metrics.cellW) * kTileOversample)));
+    const int targetH = std::max(1, static_cast<int>(std::round(std::max(1.0f, metrics.cellH) * kTileOversample)));
     return SkISize::Make(targetW, targetH);
 }
 
@@ -427,7 +421,7 @@ sk_sp<SkImage> SkiaRenderer::makeScaledImage(const SkImage* source, int targetWi
     if (!dstBitmap.tryAllocPixels(SkImageInfo::Make(outW, outH, kRGBA_8888_SkColorType, kPremul_SkAlphaType))) {
         return nullptr;
     }
-    if (!source->scalePixels(dstBitmap.pixmap(), gridSampling())) {
+    if (!source->scalePixels(dstBitmap.pixmap(), skLinearSampling())) {
         return nullptr;
     }
     dstBitmap.setImmutable();
