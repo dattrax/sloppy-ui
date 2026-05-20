@@ -301,22 +301,16 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
 
     sk_sp<SkImage> previousBlur;
-    sk_sp<SkImage> currentBlur;
     if (fBackgroundFading) {
         previousBlur = fBlurBackgroundCache.ensure(
             true, fContext.get(), fBackgroundPrevIndex, width, height,
             posterForBackground(fBackgroundPrevIndex),
             backgroundGenerationForIndex(fBackgroundPrevIndex));
-        currentBlur = fBlurBackgroundCache.ensure(
-            false, fContext.get(), fBackgroundIndex, width, height,
-            posterForBackground(fBackgroundIndex),
-            backgroundGenerationForIndex(fBackgroundIndex));
-    } else {
-        currentBlur = fBlurBackgroundCache.ensure(
-            false, fContext.get(), fBackgroundIndex, width, height,
-            posterForBackground(fBackgroundIndex),
-            backgroundGenerationForIndex(fBackgroundIndex));
     }
+    sk_sp<SkImage> currentBlur = fBlurBackgroundCache.ensure(
+        false, fContext.get(), fBackgroundIndex, width, height,
+        posterForBackground(fBackgroundIndex),
+        backgroundGenerationForIndex(fBackgroundIndex));
 
     sk_sp<SkVertices> blurMesh;
     if (!fBlurredBackgroundFullRect) {
@@ -413,11 +407,7 @@ void SkiaRenderer::draw(SkCanvas* canvas, int width, int height, float time) {
 
         canvas->save();
         canvas->clipRRect(rrect, false);
-        if (rowHasHighlight) {
-            canvas->drawImageRect(img, dstRect, skLinearSampling(), nullptr);
-        } else {
-            canvas->drawImageRect(img, dstRect, skLinearSampling(), &fDimPaint);
-        }
+        canvas->drawImageRect(img, dstRect, skLinearSampling(), rowHasHighlight ? nullptr : &fDimPaint);
         canvas->restore();
 
         if (idx == fFocusIndex) {
