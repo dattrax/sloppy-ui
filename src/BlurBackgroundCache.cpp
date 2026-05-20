@@ -78,37 +78,24 @@ sk_sp<SkImage> BlurBackgroundCache::buildBlurred(GrDirectContext* context,
     const SkRect backgroundRect = SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height));
     const SkRect dstRect = SkRect::MakeXYWH(dstX, dstY, dstW, dstH);
 
+    SkPaint composePaint;
+    composePaint.setAntiAlias(false);
+    if (fDimRgbFactor < 0.999f) {
+        SkColorMatrix dimMatrix;
+        dimMatrix.setScale(fDimRgbFactor, fDimRgbFactor, fDimRgbFactor, 1.0f);
+        composePaint.setColorFilter(SkColorFilters::Matrix(dimMatrix));
+    }
+
     SkCanvas* backgroundCanvas = backgroundSurface->getCanvas();
     backgroundCanvas->clear(SK_ColorBLACK);
-    backgroundCanvas->drawImageRect(source, dstRect, backgroundSampling());
+    backgroundCanvas->drawImageRect(source, dstRect, backgroundSampling(), &composePaint);
 
     sk_sp<SkImage> composed = backgroundSurface->makeImageSnapshot();
     if (!composed) {
         return nullptr;
     }
 
-    return applyDim(context, fBlurFilter.generate(context, fBlurRadius, composed, backgroundRect));
-}
-
-sk_sp<SkImage> BlurBackgroundCache::applyDim(GrDirectContext* context,
-                                             const sk_sp<SkImage>& blurred) const {
-    if (!blurred || fDimRgbFactor >= 0.999f) {
-        return blurred;
-    }
-
-    const SkImageInfo info = blurred->imageInfo();
-    sk_sp<SkSurface> dimSurface = SkSurfaces::RenderTarget(context, skgpu::Budgeted::kNo, info);
-    if (!dimSurface) {
-        return blurred;
-    }
-
-    SkPaint dimPaint;
-    dimPaint.setAntiAlias(false);
-    SkColorMatrix dimMatrix;
-    dimMatrix.setScale(fDimRgbFactor, fDimRgbFactor, fDimRgbFactor, 1.0f);
-    dimPaint.setColorFilter(SkColorFilters::Matrix(dimMatrix));
-    dimSurface->getCanvas()->drawImage(blurred, 0.0f, 0.0f, SkSamplingOptions(), &dimPaint);
-    return dimSurface->makeImageSnapshot();
+    return fBlurFilter.generate(context, fBlurRadius, composed, backgroundRect);
 }
 
 sk_sp<SkImage> BlurBackgroundCache::ensure(bool previousSlot, GrDirectContext* context,
