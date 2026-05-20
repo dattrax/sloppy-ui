@@ -102,6 +102,7 @@ add_executable(sloppy_ui
   sloppy_ui.cpp
   src/SkiaRenderer.cpp
   src/SkiaRendererDetail.cpp
+  src/SkiaRendererInput.cpp
   src/SkiaRendererPosterCache.cpp
   src/BlurBackgroundCache.cpp
   src/BlurBackgroundMesh.cpp
